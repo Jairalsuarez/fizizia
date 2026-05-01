@@ -1,4 +1,4 @@
-export function Button({ children, href, variant = 'primary', size = 'default', type = 'button' }) {
+export function Button({ children, href, variant = 'primary', size = 'default', type = 'button', onClick }) {
   const variantClass = {
     primary: 'primary-button',
     secondary: 'secondary-button',
@@ -8,14 +8,14 @@ export function Button({ children, href, variant = 'primary', size = 'default', 
 
   if (href) {
     return (
-      <a className={className} href={href}>
+      <a className={className} href={href} onClick={onClick}>
         {children}
       </a>
     )
   }
 
   return (
-    <button className={className} type={type}>
+    <button className={className} type={type} onClick={onClick}>
       {children}
     </button>
   )

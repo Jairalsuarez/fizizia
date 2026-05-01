@@ -7,7 +7,7 @@ export function HeroSection() {
     <div id="inicio" className="hero-layout">
       <div className="hero-copy">
         <h1>
-          Transformo ideas en <span>soluciones digitales</span> que funcionan.
+          No busques más, <span>Tu idea</span> tiene una solución digital.
         </h1>
         <p>Desarrollo sistemas, aplicaciones y experiencias digitales a la medida de tus necesidades.</p>
         <div className="hero-actions">
@@ -53,7 +53,6 @@ export function HeroSection() {
             </div>
           </div>
         </div>
-        <img className="hero-robot" src={robots.hero} alt="Robot Fizzia saludando" />
       </div>
     </div>
   )

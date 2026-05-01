@@ -30,10 +30,10 @@ export function Footer() {
         <div>
           <h3>Conversemos</h3>
           <p>¿Tienes un proyecto? Estoy listo para ayudarte.</p>
-          <Button href="#contacto" variant="secondary">Hablemos</Button>
+          <Button href="mailto:fizziadev@outlook.com" variant="secondary">Enviar correo</Button>
           <address>
             <span>Quito, Ecuador</span>
-            <span>hola@fizzia.dev</span>
+            <span>fizziadev@outlook.com</span>
           </address>
         </div>
       </div>

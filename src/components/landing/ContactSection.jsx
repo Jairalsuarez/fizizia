@@ -1,29 +1,44 @@
-import { Button } from '../ui/Button'
 import { SectionKicker } from '../ui/SectionKicker'
+import { createContactMessage } from '../../services/contactMessages'
+
+async function handleStartProject() {
+  try {
+    await createContactMessage({
+      full_name: 'Visitante landing',
+      service_interest: 'Proyecto digital',
+      message: 'Click en CTA Quiero empezar desde la landing.',
+      source: 'landing_cta',
+      metadata: {
+        event: 'cta_click',
+        page: 'home',
+      },
+    })
+  } catch (error) {
+    console.warn(error)
+  }
+}
 
 export function ContactSection() {
   return (
-    <section id="contacto" className="content-band bg-[#101510]">
-      <div className="mx-auto grid max-w-7xl gap-10 px-5 py-20 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
+    <section id="contacto" className="contact-combined">
+      {/* Testimonial */}
+      <div className="contact-testimonial">
+        <SectionKicker tone="dark">Clientes felices</SectionKicker>
+        <blockquote>
+          "Fizzia convirtio nuestra idea en una herramienta que optimizo todo nuestro trabajo."
+        </blockquote>
+        <strong>Maria Gonzalez</strong>
+        <span>Emprendedora</span>
+      </div>
+
+      {/* CTA Box */}
+      <div className="cta-section">
         <div>
-          <SectionKicker>Cotiza en Ecuador</SectionKicker>
-          <h2 className="mt-4 text-4xl font-black leading-tight text-white lg:text-5xl">
-            Cuentanos que quieres construir.
-          </h2>
-          <p className="mt-5 text-lg leading-8 text-[#d9e9d0]">
-            Este formulario se conectara con `contact_messages` y de ahi podras convertir cada solicitud en lead, cliente y proyecto.
-          </p>
+          <h2>¿Tienes una idea en mente?</h2>
+          <p>Hablemos y hagamos que suceda.</p>
         </div>
-        <form className="contact-form">
-          <div className="form-grid">
-            <label>Nombre<input placeholder="Tu nombre" /></label>
-            <label>WhatsApp<input placeholder="+593 ..." /></label>
-            <label>Ciudad<input placeholder="Quito, Guayaquil, Cuenca..." /></label>
-            <label>Servicio<input placeholder="Landing, app, sistema..." /></label>
-          </div>
-          <label>Mensaje<textarea placeholder="Tengo un negocio y quiero..." rows="5" /></label>
-          <Button size="large">Enviar solicitud</Button>
-        </form>
+        <button className="dark-button" type="button" onClick={handleStartProject}>Quiero empezar</button>
+        <img className="cta-logo-watermark" src="/images/logo-figura-transparent.png" alt="" />
       </div>
     </section>
   )
