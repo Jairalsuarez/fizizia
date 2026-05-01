@@ -50,7 +50,7 @@ export function DashboardPreview() {
 
         <div className="dashboard-shell">
           <aside className="dashboard-sidebar">
-            <strong>Fizzia</strong>
+            <strong>Fizzia OS</strong>
             <span>Leads</span>
             <span>Clientes</span>
             <span>Proyectos</span>

@@ -11,7 +11,7 @@ export async function getPortfolioProjects() {
     .select('id,slug,title,summary,industry,website_url,is_featured,sort_order')
     .eq('is_published', true)
     .order('sort_order', { ascending: true })
-    .limit(3)
+    .limit(12)
 
   if (error) {
     return fallbackProjects
