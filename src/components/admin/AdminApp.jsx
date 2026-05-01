@@ -9,6 +9,7 @@ import {
   updateLandingProjectVisibility,
 } from '../../services/adminData'
 import { isSupabaseConfigured, supabase } from '../../services/supabaseClient'
+import { getProjectPreviewUrl } from '../../utils/projectPreview'
 import { Logo } from '../ui/Logo'
 import { MaterialIcon } from '../ui/MaterialIcon'
 
@@ -288,6 +289,11 @@ function LandingProjectForm({ onCreated }) {
 
   return (
     <form className="admin-inline-form" onSubmit={handleSubmit}>
+      {form.website_url ? (
+        <div className="admin-project-preview">
+          <img src={getProjectPreviewUrl(form.website_url)} alt="Miniatura del proyecto" />
+        </div>
+      ) : null}
       <Field label="Link">
         <input
           value={form.website_url}
@@ -406,6 +412,9 @@ function AdminContent({ activeSection, data, refresh }) {
             empty="Crea proyectos para mostrarlos en la landing."
             renderItem={(project) => (
               <article className="admin-row landing-control" key={project.id}>
+                {project.website_url ? (
+                  <img className="admin-row-preview" src={getProjectPreviewUrl(project.website_url)} alt="" />
+                ) : null}
                 <div>
                   <strong>{project.title}</strong>
                   <span>{project.industry || 'Proyecto'} - {project.website_url || 'Sin link'}</span>

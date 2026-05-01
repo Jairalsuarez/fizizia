@@ -23,7 +23,7 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
-  if (isNativeApp || hash === '#/admin') {
+  if (isNativeApp || hash === '#/admin' || hash === '#/login') {
     return <AdminApp />
   }
 
