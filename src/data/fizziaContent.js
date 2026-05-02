@@ -43,7 +43,7 @@ export const services = [
   },
   {
     title: 'Invitaciones de bodas',
-    text: 'Invitaciones digitales interactivas para tu gran día.',
+    text: 'Invitaciones interactivas personalizadas para tu gran día.',
     icon: 'favorite',
   },
 ]
@@ -51,7 +51,7 @@ export const services = [
 export const processSteps = [
   {
     title: 'Hablamos',
-    text: 'Cuéntame tu idea y entendemos tu objetivo.',
+    text: 'Cuéntame tu idea en una reunión virtual.',
     icon: 'forum',
   },
   {
@@ -61,7 +61,7 @@ export const processSteps = [
   },
   {
     title: 'Desarrollamos',
-    text: 'Creamos tu solución con calidad y enfoque.',
+    text: 'Creamos tu proyecto con calidad y enfoque.',
     icon: 'draw',
   },
   {
@@ -108,7 +108,7 @@ export const fallbackProjects = [
 export const navItems = ['Inicio', 'Servicios', 'Proyectos', 'Proceso', 'Contacto']
 
 export const heroBenefits = [
-  { label: 'A medida', icon: 'auto_awesome' },
+  { label: 'Hecho a tu medida', icon: 'auto_awesome' },
   { label: 'Escalable', icon: 'query_stats' },
   { label: 'Moderno', icon: 'verified_user' },
   { label: 'Seguro', icon: 'security' },

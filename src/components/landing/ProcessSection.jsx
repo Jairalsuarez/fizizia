@@ -27,9 +27,9 @@ export function ProcessSection() {
     <section id="proceso" className="process-section" ref={sectionRef}>
       <div className="section-container">
         <div className="section-heading centered">
-          <SectionKicker tone="dark">Mi proceso</SectionKicker>
+          
           <h2>
-            Simple, claro y <span>efectivo</span>
+            Bueno, Bonito y <span>Barato</span>
           </h2>
         </div>
         <div className={`process-list ${isVisible ? 'animate' : ''}`}>

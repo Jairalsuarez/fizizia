@@ -37,16 +37,15 @@ export function ServicesSection() {
     <section id="servicios" className="content-band" ref={sectionRef}>
       <div className="section-container">
         <div className="section-heading centered">
-          <SectionKicker tone="dark">Lo que hago</SectionKicker>
           <h2>
-            Soluciones que impulsan <br />
-            tu <span>mundo digital</span>
+            El servicio que <br />
+            tú <span>necesitas</span>
           </h2>
         </div>
         <div className={`services-grid ${isVisible ? 'animate' : ''}`}>
           {services.map((service) => (
             <ServiceCard key={service.title} service={service} />
-          ))}
+          ))} 
         </div>
       </div>
     </section>

@@ -24,9 +24,9 @@ html {
 :root {
   --bg-dark: #050505;
   --bg-panel: rgba(20, 20, 20, 0.6);
-  --glass-border: rgba(50, 168, 82, 0.15);
-  --neon-accent: #32a852; /* Logo Green */
-  --neon-glow: rgba(50, 168, 82, 0.5);
+  --glass-border: rgba(68, 166, 74, 0.15);
+  --neon-accent: #44a64a; /* New Requested Green */
+  --neon-glow: rgba(68, 166, 74, 0.5);
   --text-main: #ffffff;
   --text-muted: #a0a0a0;
 }
@@ -99,20 +99,35 @@ body::after {
 
 .brand-logo {
   color: var(--neon-accent) !important;
-  text-shadow: 0 0 15px rgba(50, 168, 82, 0.2);
 }
 
+.site-nav .dark-button {
+  background: var(--neon-accent) !important;
+  color: #000 !important;
+  border: none !important;
+  font-weight: 800;
+  box-shadow: 0 4px 15px var(--neon-glow);
+  padding: 10px 24px;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.site-nav .dark-button:hover {
+  background: #4cc253 !important;
+  box-shadow: 0 6px 20px rgba(68, 166, 74, 0.6);
+  transform: translateY(-2px);
+}
 /* Glassmorphism Buttons */
 .primary-button {
-  background: rgba(50, 168, 82, 0.15) !important;
-  border: 1px solid rgba(50, 168, 82, 0.4) !important;
+  background: rgba(68, 166, 74, 0.15) !important;
+  border: 1px solid rgba(68, 166, 74, 0.4) !important;
   color: #fff !important;
   backdrop-filter: blur(10px);
-  box-shadow: 0 8px 32px rgba(50, 168, 82, 0.2) !important;
+  box-shadow: 0 8px 32px rgba(68, 166, 74, 0.2) !important;
 }
 .primary-button:hover {
-  background: rgba(50, 168, 82, 0.25) !important;
-  box-shadow: 0 12px 40px rgba(50, 168, 82, 0.4) !important;
+  background: rgba(68, 166, 74, 0.25) !important;
+  box-shadow: 0 12px 40px rgba(68, 166, 74, 0.4) !important;
   transform: translateY(-2px) scale(1.02) !important;
 }
 .primary-button::after {
@@ -122,6 +137,9 @@ body::after {
 }
 
 .secondary-button {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   background: rgba(255, 255, 255, 0.03) !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
   color: var(--text-main) !important;
@@ -134,10 +152,10 @@ body::after {
 
 /* Llamativo Hablemos Button */
 .dark-button {
-  background: #32a852 !important;
-  border: 1px solid #4ade80 !important;
+  background: #44a64a !important;
+  border: 1px solid #66cf6d !important;
   color: #ffffff !important;
-  box-shadow: 0 0 20px rgba(50, 168, 82, 0.6), inset 0 0 10px rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 0 20px rgba(68, 166, 74, 0.6), inset 0 0 10px rgba(255, 255, 255, 0.3) !important;
   animation: pulse-button 2s infinite;
   transition: all 0.3s ease !important;
 }
@@ -569,9 +587,9 @@ body::after {
   overflow: hidden;
   border-radius: 16px;
   padding: 36px 50px;
-  background: linear-gradient(110deg, #1a7a3a 0%, #32a852 50%, #3cb862 100%) !important;
+  background: linear-gradient(110deg, #2e7a40 0%, #44a64a 50%, #52b858 100%) !important;
   color: #fff !important;
-  box-shadow: 0 20px 60px rgba(50, 168, 82, 0.25);
+  box-shadow: 0 20px 60px rgba(68, 166, 74, 0.25);
 }
 
 .cta-section h2 {

@@ -30,14 +30,20 @@ export function Footer() {
         <div>
           <h3>Conversemos</h3>
           <p>¿Tienes un proyecto? Estoy listo para ayudarte.</p>
-          <Button href="mailto:fizziadev@outlook.com" variant="secondary">Enviar correo</Button>
+          <Button href="mailto:fizziadev@outlook.com" variant="secondary">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '10px'}}>
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+              <polyline points="22,6 12,13 2,6"></polyline>
+            </svg>
+            Enviar correo
+          </Button>
           <address>
-            <span>Quito, Ecuador</span>
+            <span>Ecuador</span>
             <span>fizziadev@outlook.com</span>
           </address>
         </div>
       </div>
-      <small>© 2025 Fizzia.dev - Jair Suarez. Todos los derechos reservados.</small>
+      <small>© 2025 Fizzia.dev. Todos los derechos reservados.</small>
     </footer>
   )
 }
