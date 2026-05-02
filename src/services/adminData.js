@@ -15,7 +15,7 @@ export async function getAdminOverview() {
   const [leads, clients, projects, tasks, invoices, landingProjects] = await Promise.all([
     supabase
       .from('leads')
-      .select('id,full_name,company_name,status,service_id,budget_range,created_at')
+      .select('id,full_name,email,phone,company_name,tax_id,province,city,status,service_id,budget_range,need_summary,converted_client_id,created_at')
       .order('created_at', { ascending: false })
       .limit(20),
     supabase
@@ -71,6 +71,63 @@ export async function createClient(payload) {
 
   if (error) throwAdminError(error)
   return data
+}
+
+export async function convertLeadToClient(lead) {
+  if (!lead?.id) {
+    throw new Error('No se encontro el lead para convertirlo.')
+  }
+
+  if (lead.converted_client_id || lead.status === 'won') {
+    throw new Error('Este lead ya fue convertido en cliente.')
+  }
+
+  const { data: client, error: clientError } = await supabase
+    .from('clients')
+    .insert({
+      name: lead.company_name || lead.full_name,
+      legal_name: lead.company_name || null,
+      tax_id: lead.tax_id || null,
+      email: lead.email || null,
+      phone: lead.phone || null,
+      province: lead.province || null,
+      city: lead.city || null,
+      notes: lead.need_summary || null,
+      status: 'active',
+      created_from_lead_id: lead.id,
+    })
+    .select()
+    .single()
+
+  if (clientError) throwAdminError(clientError)
+
+  if (lead.full_name || lead.email || lead.phone) {
+    const { error: contactError } = await supabase
+      .from('client_contacts')
+      .insert({
+        client_id: client.id,
+        full_name: lead.full_name || lead.company_name || 'Contacto principal',
+        email: lead.email || null,
+        phone: lead.phone || null,
+        whatsapp: lead.phone || null,
+        is_primary: true,
+      })
+
+    if (contactError) throwAdminError(contactError)
+  }
+
+  const { error: leadError } = await supabase
+    .from('leads')
+    .update({
+      status: 'won',
+      converted_client_id: client.id,
+      won_at: new Date().toISOString(),
+    })
+    .eq('id', lead.id)
+
+  if (leadError) throwAdminError(leadError)
+
+  return client
 }
 
 export async function createProject(payload) {

@@ -1709,6 +1709,61 @@ body {
   white-space: nowrap;
 }
 
+.lead-row {
+  align-items: flex-start;
+}
+
+.lead-row-copy {
+  min-width: 0;
+}
+
+.lead-row-copy small,
+.lead-row-copy p,
+.lead-row-copy em {
+  display: block;
+  margin-top: 7px;
+  color: #c4d0c1;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.lead-row-copy p {
+  max-width: 54rem;
+  color: #93a090;
+}
+
+.lead-row-copy em {
+  color: #ffb4a8;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.lead-row > button {
+  display: inline-flex;
+  min-height: 42px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(104, 214, 109, 0.24);
+  border-radius: 999px;
+  background: rgba(104, 214, 109, 0.09);
+  color: #68d66d;
+  padding: 0 14px;
+  font-weight: 900;
+}
+
+.lead-row > button:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.lead-row > button.converted {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: #cddccb;
+}
+
 .admin-empty {
   margin: 0;
   color: #aebdac;
@@ -2260,4 +2315,13 @@ button {
   }
 }
 
+@media (max-width: 620px) {
+  .lead-row {
+    flex-direction: column;
+  }
+
+  .lead-row > button {
+    width: 100%;
+  }
+}
 

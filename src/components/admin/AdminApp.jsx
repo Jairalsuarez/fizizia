@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import {
+  convertLeadToClient,
   createClient,
   createLandingProject,
   createProject,
@@ -322,6 +323,50 @@ function LandingProjectForm({ onCreated }) {
   )
 }
 
+function LeadConversionRow({ lead, onConverted }) {
+  const [isConverting, setIsConverting] = useState(false)
+  const [error, setError] = useState('')
+  const isConverted = Boolean(lead.converted_client_id) || lead.status === 'won'
+
+  async function handleConvert() {
+    if (isConverted) return
+    setError('')
+    setIsConverting(true)
+
+    try {
+      await convertLeadToClient(lead)
+      await onConverted()
+    } catch (convertError) {
+      setError(convertError.message || 'No pude convertir este lead.')
+    } finally {
+      setIsConverting(false)
+    }
+  }
+
+  return (
+    <article className="admin-row lead-row">
+      <div className="lead-row-copy">
+        <strong>{lead.company_name || lead.full_name}</strong>
+        <span>{lead.status} - {lead.budget_range || 'Sin presupuesto'}</span>
+        {lead.email || lead.phone ? (
+          <small>{[lead.email, lead.phone].filter(Boolean).join(' - ')}</small>
+        ) : null}
+        {lead.need_summary ? <p>{lead.need_summary}</p> : null}
+        {error ? <em>{error}</em> : null}
+      </div>
+      <button
+        className={isConverted ? 'converted' : ''}
+        type="button"
+        onClick={handleConvert}
+        disabled={isConverting || isConverted}
+      >
+        <MaterialIcon name={isConverted ? 'check_circle' : 'person_add'} />
+        {isConverted ? 'Cliente' : isConverting ? 'Convirtiendo...' : 'Convertir'}
+      </button>
+    </article>
+  )
+}
+
 function DashboardView({ data }) {
   const activeProjects = data.projects.filter((project) => project.status === 'active').length
   const landingLive = data.landingProjects.filter((project) => project.is_published).length
@@ -468,12 +513,7 @@ function AdminContent({ activeSection, data, refresh }) {
           items={data.leads}
           empty="Los contactos de la landing apareceran aqui."
           renderItem={(lead) => (
-            <article className="admin-row" key={lead.id}>
-              <div>
-                <strong>{lead.company_name || lead.full_name}</strong>
-                <span>{lead.status} - {lead.budget_range || 'Sin presupuesto'}</span>
-              </div>
-            </article>
+            <LeadConversionRow key={lead.id} lead={lead} onConverted={refresh} />
           )}
         />
       </AdminPanel>
