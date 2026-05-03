@@ -1,105 +1,112 @@
-import { useEffect, useState } from 'react'
-import { robots } from '../../data/fizziaContent'
-import { getPortfolioProjects } from '../../services/portfolioProjects'
-import { getProjectPreviewUrl, getPlaceholderUrl } from '../../utils/projectPreview'
+import { useState, useEffect, useCallback } from 'react'
+import { getPublishedProjects } from '../../services/landingData'
+import { Skeleton } from '../ui/Skeleton'
+import { EmptyState } from '../ui/EmptyState'
+import { Button } from '../ui/Button'
+import { Icon } from '../ui/Icon'
 
 export function ProjectsSection() {
   const [projects, setProjects] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [loading, setLoading] = useState(true)
   const [activeIndex, setActiveIndex] = useState(0)
 
   useEffect(() => {
-    let isMounted = true
-    getPortfolioProjects().then((items) => {
-      if (isMounted) {
-        setProjects(items && items.length > 0 ? items : [])
-        setIsLoading(false)
+    let mounted = true
+    getPublishedProjects().then((data) => {
+      if (mounted) {
+        setProjects(data && data.length > 0 ? data : [])
+        setLoading(false)
       }
-    })
-    return () => { isMounted = false }
+    }).catch(() => { if (mounted) setLoading(false) })
+    return () => { mounted = false }
   }, [])
 
-  if (isLoading || projects.length === 0) {
+  const goToPrev = useCallback(() => {
+    setActiveIndex((i) => (i - 1 + projects.length) % projects.length)
+  }, [projects.length])
+
+  const goToNext = useCallback(() => {
+    setActiveIndex((i) => (i + 1) % projects.length)
+  }, [projects.length])
+
+  if (loading) {
     return (
-      <section id="proyectos" className="projects-section">
-        <div className="projects-header">
-          <h2>Cargando proyectos...</h2>
-        </div>
-        <div className="project-showcase loading">
-          <div className="loading-spinner"></div>
+      <section id="proyectos" className="py-24 bg-dark-950">
+        <div className="mx-auto max-w-6xl px-6 text-center">
+          <Skeleton className="h-12 w-80 mx-auto mb-12 bg-dark-900" />
+          <Skeleton className="w-80 h-56 rounded-2xl mx-auto bg-dark-900" />
         </div>
       </section>
     )
   }
 
-  const visibleProjects = projects
-    .slice(activeIndex)
-    .concat(projects.slice(0, activeIndex))
-    .slice(0, Math.min(3, projects.length))
-
-  function goToPrevious() {
-    setActiveIndex((currentIndex) => (currentIndex - 1 + projects.length) % projects.length)
+  if (projects.length === 0) {
+    return (
+      <section id="proyectos" className="py-24 bg-dark-950">
+        <div className="mx-auto max-w-6xl px-6">
+          <EmptyState
+            icon="folder_open"
+            title="Próximamente"
+            description="Los proyectos se están cargando. Mientras tanto, hablemos de tu idea."
+            action={<Button href="#contacto" variant="outline">Cotiza tu proyecto</Button>}
+          />
+        </div>
+      </section>
+    )
   }
 
-  function goToNext() {
-    setActiveIndex((currentIndex) => (currentIndex + 1) % projects.length)
-  }
+  const current = projects[activeIndex]
 
   return (
-    <section id="proyectos" className="projects-section">
-      <div className="projects-header">
-        <h2>
-          Mis proyectos son la <br />
-          <span>prueba que necesitas</span>
-        </h2>
+    <section id="proyectos" className="py-24 bg-dark-950 relative overflow-hidden">
+      <div className="absolute inset-0">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-fizzia-500/5 rounded-full blur-3xl" />
       </div>
 
-      <div className="project-showcase">
-        <div className="cards-wrapper">
-          {visibleProjects.map((project, index) => (
-            <article 
-              className={`showcase-card ${['small', 'tall', 'food'][index]}`} 
-              key={project.id || project.slug || index}
-              onClick={() => {
-                if (project.website_url) window.open(project.website_url, '_blank')
-              }}
-              style={{ cursor: project.website_url ? 'pointer' : 'default' }}
-            >
-              {project.website_url ? (
-                <img 
-                  className="showcase-preview" 
-                  src={getProjectPreviewUrl(project.website_url)} 
-                  onError={(e) => { e.target.onerror = null; e.target.src = getPlaceholderUrl(index); }}
-                  alt="" 
-                />
-              ) : (
-                <img 
-                  className="showcase-preview" 
-                  src={getPlaceholderUrl(index)} 
-                  alt="" 
-                />
+      <div className="relative mx-auto max-w-6xl px-6 text-center">
+        <span className="inline-block px-4 py-1.5 bg-fizzia-500/10 text-fizzia-400 text-xs font-bold uppercase rounded-full mb-4">Portafolio</span>
+        <h2 className="text-3xl md:text-4xl lg:text-5xl font-black text-white leading-tight mb-16">
+          Mis proyectos son la <br />
+          <span className="text-fizzia-400">prueba que necesitas</span>
+        </h2>
+
+        <div className="flex items-center justify-center gap-6 min-h-80">
+          <button onClick={goToPrev} className="w-14 h-14 flex items-center justify-center rounded-full bg-dark-900 border border-dark-800 text-fizzia-400 hover:bg-fizzia-500 hover:text-white transition-all shrink-0" aria-label="Anterior">
+            <Icon name="chevron_left" size={24} />
+          </button>
+
+          <div className="relative w-80 h-56 rounded-2xl overflow-hidden border border-dark-700 shadow-2xl shadow-fizzia-500/10 transition-all duration-500">
+            <div className="absolute inset-0 bg-gradient-to-br from-dark-900 to-black" />
+            {current.thumbnail_url ? (
+              <img src={current.thumbnail_url} alt={current.title} className="absolute inset-0 w-full h-full object-cover opacity-40" />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Icon name="code" size={64} className="text-dark-700" />
+              </div>
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
+            <div className="absolute bottom-0 left-0 right-0 p-6 text-left">
+              <h3 className="text-white font-bold text-xl mb-1">{current.title}</h3>
+              {current.summary && (
+                <p className="text-dark-400 text-sm">{current.summary}</p>
               )}
-              <strong>{project.title}</strong>
-            </article>
-          ))}
-        </div>
-        
-        <div className="slider-dots">
-          <button aria-label="Anterior" onClick={goToPrevious} type="button">
-            <span className="material-symbols-rounded">chevron_left</span>
-          </button>
-          <div className="dots-nav">
-            {projects.map((_, index) => (
-              <i 
-                key={index} 
-                className={`fizzia-dot ${index === activeIndex ? 'active' : ''}`}
-                onClick={() => setActiveIndex(index)}
-              />
-            ))}
+            </div>
           </div>
-          <button aria-label="Siguiente" onClick={goToNext} type="button">
-            <span className="material-symbols-rounded">chevron_right</span>
+
+          <button onClick={goToNext} className="w-14 h-14 flex items-center justify-center rounded-full bg-dark-900 border border-dark-800 text-fizzia-400 hover:bg-fizzia-500 hover:text-white transition-all shrink-0" aria-label="Siguiente">
+            <Icon name="chevron_right" size={24} />
           </button>
+        </div>
+
+        <div className="flex justify-center gap-3 mt-8">
+          {projects.map((_, i) => (
+            <button
+              key={i}
+              onClick={() => setActiveIndex(i)}
+              className={`w-2.5 h-2.5 rounded-full transition-all ${i === activeIndex ? 'bg-fizzia-400 scale-125' : 'bg-dark-700 hover:bg-dark-500'}`}
+              aria-label={`Ver proyecto ${i + 1}`}
+            />
+          ))}
         </div>
       </div>
     </section>
