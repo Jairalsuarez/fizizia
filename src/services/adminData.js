@@ -75,7 +75,7 @@ export async function createProject(payload) {
   const cleaned = cleanPayload({
     ...payload,
     currency: payload.currency || 'USD',
-    status: payload.status || 'discovery'
+    status: payload.status || 'solicitado'
   })
   return supabase.from('projects').insert(cleaned).select().single()
 }
@@ -244,7 +244,7 @@ export async function getPendingProjectRequests() {
   const { data } = await supabase
     .from('projects')
     .select('*, clients(name)')
-    .eq('status', 'discovery')
+    .eq('status', 'solicitado')
     .order('created_at', { ascending: false })
   return data || []
 }

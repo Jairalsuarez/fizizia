@@ -4,12 +4,12 @@ import { supabase } from '../../services/supabase'
 import { useToast } from '../../components/Toast'
 
 const statusLabels = {
-  discovery: '🔍 Solicitud',
-  active: '⚡ En desarrollo',
-  doing: '🚀 En progreso',
-  paused: '⏸ Pausado',
-  delivered: '✅ Entregado',
-  cancelled: '❌ Cancelado',
+  solicitado: '📋 Solicitado',
+  preparando: '🔧 Preparando',
+  trabajando: '⚡ Trabajando',
+  pausado: '⏸ Pausado',
+  entregado: '✅ Entregado',
+  cancelado: '❌ Cancelado',
 }
 
 export function MessagesPage() {
@@ -124,7 +124,7 @@ export function MessagesPage() {
 
   const projectsWithUnread = projects.map(p => ({
     ...p,
-    unread: p.status === 'discovery'
+    unread: p.status === 'solicitado'
   }))
 
   if (loading) {

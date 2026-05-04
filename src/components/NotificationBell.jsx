@@ -20,9 +20,9 @@ export function NotificationBell({ unreadCount }) {
 
   const getPhaseLabel = (status) => {
     const labels = {
-      discovery: 'Descubrimiento',
-      active: 'En desarrollo',
-      doing: 'En progreso',
+      solicitado: 'Solicitado',
+      preparando: 'Preparando',
+      trabajando: 'Trabajando',
       paused: 'Pausado',
       delivered: 'Entregado',
       cancelled: 'Cancelado',
@@ -41,8 +41,8 @@ export function NotificationBell({ unreadCount }) {
           title: p.name,
           message: `Proyecto en fase: ${getPhaseLabel(p.status)}`,
           time: p.created_at,
-          type: p.status === 'discovery' ? 'info' : 'success',
-          read: p.status !== 'discovery',
+          type: p.status === 'solicitado' ? 'info' : 'success',
+          read: p.status !== 'solicitado',
         }))
 
         notifs.push({

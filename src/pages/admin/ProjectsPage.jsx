@@ -3,7 +3,7 @@ import { StatusBadge, EmptyState, Skeleton } from '../../components/ui/'
 import { formatMoney, formatDate } from '../../utils/format'
 import { getAllProjects } from '../../services/adminData'
 
-const FINISHED_STATUSES = ['delivered', 'cancelled']
+const FINISHED_STATUSES = ['entregado', 'cancelado']
 
 export function ProjectsPage() {
   const [projects, setProjects] = useState([])
@@ -43,19 +43,19 @@ export function ProjectsPage() {
         >
           Todos
         </button>
-        {FINISHED_STATUSES.map((status) => (
-          <button
-            key={status}
-            onClick={() => setStatusFilter(status)}
-            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              statusFilter === status
-                ? 'bg-fizzia-500 text-white'
-                : 'bg-dark-800 text-dark-300 hover:text-white'
-            }`}
-          >
-            {status === 'delivered' ? 'Entregados' : status === 'cancelled' ? 'Cancelados' : status}
-          </button>
-        ))}
+            {FINISHED_STATUSES.map((status) => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  statusFilter === status
+                    ? 'bg-fizzia-500 text-white'
+                    : 'bg-dark-800 text-dark-300 hover:text-white'
+                }`}
+              >
+                {status === 'entregado' ? 'Entregados' : status === 'cancelado' ? 'Cancelados' : status}
+              </button>
+            ))}
       </div>
 
       <div className="rounded-lg border border-dark-700 bg-dark-900 overflow-hidden">

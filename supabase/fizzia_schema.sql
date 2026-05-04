@@ -17,7 +17,7 @@ end $$;
 
 do $$
 begin
-  create type public.project_status as enum ('discovery', 'quoted', 'active', 'paused', 'review', 'delivered', 'cancelled');
+  create type public.project_status as enum ('solicitado', 'preparando', 'trabajando', 'pausado', 'cancelado', 'entregado');
 exception when duplicate_object then null;
 end $$;
 

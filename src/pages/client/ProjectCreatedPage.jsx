@@ -2,7 +2,7 @@ import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { useEffect } from 'react'
 
 const phases = [
-  { key: 'discovery', label: 'Descubrimiento', color: 'bg-fizzia-500', icon: '🔍' },
+  { key: 'solicitado', label: 'Solicitado', color: 'bg-fizzia-500', icon: '📋' },
 ]
 
 export function ProjectCreatedPage() {

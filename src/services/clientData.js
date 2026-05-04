@@ -211,7 +211,7 @@ export async function createProjectRequest(name, description, budget, details) {
       client_id: client.id,
       name,
       description: details ? `${description}\n\n${details}` : description,
-      status: 'discovery',
+      status: 'solicitado',
       budget: budget || 0,
     })
     .select()
@@ -223,6 +223,25 @@ export async function createProjectRequest(name, description, budget, details) {
   }
 
   return { project: data, error: null }
+}
+
+export async function getProjectFileRequests(projectId) {
+  const { data } = await supabase
+    .from('project_file_requests')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function fulfillFileRequest(requestId, fileId = null) {
+  const { data, error } = await supabase
+    .from('project_file_requests')
+    .update({ fulfilled: true, fulfilled_file_id: fileId, fulfilled_at: new Date().toISOString() })
+    .eq('id', requestId)
+    .select()
+    .single()
+  return { data, error }
 }
 
 export async function uploadProjectFile(projectId, file, uploaderId = null, note = '') {

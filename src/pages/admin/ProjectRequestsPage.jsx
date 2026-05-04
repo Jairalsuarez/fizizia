@@ -23,8 +23,8 @@ export function ProjectRequestsPage() {
     const load = async () => {
       try {
         const data = await getAllProjects()
-        setRequests(data.filter(p => p.status === 'discovery'))
-        setActiveProjects(data.filter(p => p.status !== 'discovery'))
+        setRequests(data.filter(p => p.status === 'solicitado'))
+        setActiveProjects(data.filter(p => p.status !== 'solicitado'))
       } catch {
         setRequests([])
         setActiveProjects([])
@@ -43,13 +43,13 @@ export function ProjectRequestsPage() {
       if (reviewForm.clientName && !clientId) {
         const { data } = await createClient({
           name: reviewForm.clientName,
-          status: 'active'
+          status: 'preparando'
         })
         if (data) clientId = data.id
       }
 
       await updateProject(selectedRequest.id, {
-        status: reviewForm.projectType || 'active',
+        status: reviewForm.projectType || 'preparando',
         budget: reviewForm.budget ? Number(reviewForm.budget) : selectedRequest.budget,
         start_date: reviewForm.startDate || null,
         due_date: reviewForm.dueDate || null,
@@ -59,7 +59,7 @@ export function ProjectRequestsPage() {
 
       setRequests(prev => prev.filter(r => r.id !== selectedRequest.id))
       const updated = await getAllProjects()
-      setActiveProjects(updated.filter(p => p.status !== 'discovery'))
+      setActiveProjects(updated.filter(p => p.status !== 'solicitado'))
       setShowModal(false)
       setSelectedRequest(null)
       setReviewForm({ budget: '', startDate: '', dueDate: '', notes: '', clientName: '', projectType: '' })
@@ -88,12 +88,12 @@ export function ProjectRequestsPage() {
       dueDate: request.due_date || '',
       notes: request.notes || '',
       clientName: '',
-      projectType: 'active'
+      projectType: 'preparando'
     })
     setShowModal(true)
   }
 
-  const displayProjects = filter === 'requests' ? requests : filter === 'active' ? activeProjects : [...requests, ...activeProjects]
+  const displayProjects = filter === 'requests' ? requests : filter === 'preparando' ? activeProjects : [...requests, ...activeProjects]
 
   if (loading) {
     return (
@@ -118,7 +118,7 @@ export function ProjectRequestsPage() {
         {[
           { key: 'all', label: 'Todos' },
           { key: 'requests', label: `Solicitudes (${requests.length})` },
-          { key: 'active', label: `Activos (${activeProjects.length})` }
+          { key: 'preparando', label: `En curso (${activeProjects.length})` }
         ].map(f => (
           <button
             key={f.key}
@@ -145,8 +145,8 @@ export function ProjectRequestsPage() {
             <div
               key={project.id}
               className={`bg-dark-900/50 border rounded-xl p-5 transition-all ${
-                project.status === 'discovery'
-                  ? 'border-yellow-500/30 hover:border-yellow-500/50'
+                project.status === 'solicitado'
+                  ? 'border-fizzia-500/30 hover:border-fizzia-500/50'
                   : 'border-dark-800 hover:border-dark-700'
               }`}
             >
@@ -154,8 +154,8 @@ export function ProjectRequestsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1">
                     <h3 className="text-white font-semibold text-lg">{project.name}</h3>
-                    {project.status === 'discovery' && (
-                      <span className="text-xs px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-400 font-medium">
+                    {project.status === 'solicitado' && (
+                      <span className="text-xs px-2.5 py-1 rounded-full bg-fizzia-500/20 text-fizzia-400 font-medium">
                         Solicitud
                       </span>
                     )}
@@ -170,7 +170,7 @@ export function ProjectRequestsPage() {
                   )}
                 </div>
                 <div className="flex gap-2 shrink-0">
-                  {project.status === 'discovery' ? (
+                  {project.status === 'solicitado' ? (
                     <>
                       <button
                         onClick={() => handleReject(project)}
@@ -187,9 +187,11 @@ export function ProjectRequestsPage() {
                     </>
                   ) : (
                     <span className={`text-xs px-2.5 py-1.5 rounded-full font-medium ${
-                      project.status === 'active' ? 'bg-fizzia-500/20 text-fizzia-400' :
-                      project.status === 'paused' ? 'bg-yellow-500/20 text-yellow-400' :
-                      project.status === 'delivered' ? 'bg-green-500/20 text-green-400' :
+                      project.status === 'preparando' ? 'bg-purple-500/20 text-purple-400' :
+                      project.status === 'trabajando' ? 'bg-fizzia-500/20 text-fizzia-400' :
+                      project.status === 'pausado' ? 'bg-yellow-500/20 text-yellow-400' :
+                      project.status === 'entregado' ? 'bg-green-500/20 text-green-400' :
+                      project.status === 'cancelado' ? 'bg-red-500/20 text-red-400' :
                       'bg-dark-700 text-dark-400'
                     }`}>
                       {project.status}
@@ -230,9 +232,9 @@ export function ProjectRequestsPage() {
                   onChange={(e) => setReviewForm({ ...reviewForm, projectType: e.target.value })}
                   className="w-full px-4 py-3 bg-dark-950 border border-dark-700 rounded-xl text-white focus:outline-none focus:border-fizzia-500 transition-all"
                 >
-                  <option value="active">En desarrollo</option>
-                  <option value="discovery">Descubrimiento</option>
-                  <option value="paused">Pausado</option>
+                  <option value="preparando">Preparando</option>
+                  <option value="trabajando">Trabajando</option>
+                  <option value="pausado">Pausado</option>
                 </select>
               </div>
               <div>

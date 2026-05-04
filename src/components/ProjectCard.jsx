@@ -2,16 +2,12 @@ import { Link } from 'react-router-dom'
 import { formatDate } from '../utils/format'
 
 const phases = [
-  { key: 'discovery', label: 'Descubrimiento', color: 'bg-fizzia-500', icon: '🔍' },
-  { key: 'design', label: 'Diseno', color: 'bg-purple-500', icon: '🎨' },
-  { key: 'development', label: 'Desarrollo', color: 'bg-blue-500', icon: '💻' },
-  { key: 'testing', label: 'Pruebas', color: 'bg-yellow-500', icon: '🧪' },
-  { key: 'review', label: 'Revision', color: 'bg-orange-500', icon: '👁️' },
-  { key: 'active', label: 'En desarrollo', color: 'bg-blue-500', icon: '⚡' },
-  { key: 'doing', label: 'En progreso', color: 'bg-blue-500', icon: '🚀' },
-  { key: 'paused', label: 'Pausado', color: 'bg-yellow-500', icon: '⏸️' },
-  { key: 'delivered', label: 'Entregado', color: 'bg-green-500', icon: '✅' },
-  { key: 'cancelled', label: 'Cancelado', color: 'bg-red-500', icon: '❌' },
+  { key: 'solicitado', label: 'Solicitado', color: 'bg-fizzia-500', icon: '📋' },
+  { key: 'preparando', label: 'Preparando', color: 'bg-purple-500', icon: '🔧' },
+  { key: 'trabajando', label: 'Trabajando', color: 'bg-blue-500', icon: '⚡' },
+  { key: 'pausado', label: 'Pausado', color: 'bg-yellow-500', icon: '⏸️' },
+  { key: 'entregado', label: 'Entregado', color: 'bg-green-500', icon: '✅' },
+  { key: 'cancelado', label: 'Cancelado', color: 'bg-red-500', icon: '❌' },
 ]
 
 function getPhase(status) {

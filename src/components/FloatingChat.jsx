@@ -220,8 +220,8 @@ export function FloatingChat({ onUnreadChange }) {
                   >
                     <p className="text-white text-sm font-medium truncate">{proj.name}</p>
                     <p className="text-dark-500 text-xs mt-0.5">
-                      {proj.status === 'discovery' ? 'En descubrimiento' :
-                       proj.status === 'active' ? 'En desarrollo' :
+                      {proj.status === 'solicitado' ? 'Solicitado' :
+                       proj.status === 'preparando' ? 'Preparando' :
                        proj.status === 'delivered' ? 'Entregado' : proj.status}
                     </p>
                   </button>

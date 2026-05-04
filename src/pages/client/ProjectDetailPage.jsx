@@ -1,21 +1,24 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getMyProjectMilestones, getProjectFiles, uploadProjectFile } from '../../services/clientData'
+import { getMyProjectMilestones, getProjectFiles, uploadProjectFile, getProjectMessages, sendProjectMessage, subscribeToMessages, getProjectFileRequests } from '../../services/clientData'
 import { formatDate, formatMoney } from '../../utils/format'
 import { useToast } from '../../components/Toast'
 import { supabase } from '../../services/supabase'
 import { useAuth } from '../../features/auth/authContext'
 
 const phases = [
-  { key: 'discovery', label: 'Descubrimiento', color: 'bg-fizzia-500', textColor: 'text-fizzia-400', icon: '🔍' },
-  { key: 'active', label: 'En desarrollo', color: 'bg-blue-500', textColor: 'text-blue-400', icon: '⚡' },
-  { key: 'doing', label: 'En progreso', color: 'bg-blue-500', textColor: 'text-blue-400', icon: '🚀' },
+  { key: 'solicitado', label: 'Solicitado', color: 'bg-fizzia-500', textColor: 'text-fizzia-400', icon: '📋' },
+  { key: 'preparando', label: 'Preparando', color: 'bg-purple-500', textColor: 'text-purple-400', icon: '🔧' },
+  { key: 'trabajando', label: 'Trabajando', color: 'bg-blue-500', textColor: 'text-blue-400', icon: '⚡' },
+  { key: 'pausado', label: 'Pausado', color: 'bg-yellow-500', textColor: 'text-yellow-400', icon: '⏸️' },
+  { key: 'entregado', label: 'Entregado', color: 'bg-green-500', textColor: 'text-green-400', icon: '✅' },
+  { key: 'cancelado', label: 'Cancelado', color: 'bg-red-500', textColor: 'text-red-400', icon: '❌' },
   { key: 'paused', label: 'Pausado', color: 'bg-yellow-500', textColor: 'text-yellow-400', icon: '⏸️' },
   { key: 'delivered', label: 'Entregado', color: 'bg-green-500', textColor: 'text-green-400', icon: '✅' },
   { key: 'cancelled', label: 'Cancelado', color: 'bg-red-500', textColor: 'text-red-400', icon: '❌' },
 ]
 
-const phaseOrder = ['discovery', 'design', 'active', 'doing', 'review', 'delivered']
+const phaseOrder = ['solicitado', 'preparando', 'trabajando', 'entregado']
 
 function getPhaseIndex(status) {
   return phaseOrder.indexOf(status)
@@ -29,6 +32,9 @@ export function ProjectDetailPage() {
   const [project, setProject] = useState(null)
   const [milestones, setMilestones] = useState([])
   const [files, setFiles] = useState([])
+  const [messages, setMessages] = useState([])
+  const [newMessage, setNewMessage] = useState('')
+  const [fileRequests, setFileRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('info')
   const [showEdit, setShowEdit] = useState(false)
@@ -38,9 +44,12 @@ export function ProjectDetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [fileNote, setFileNote] = useState('')
+  const [fulfillingRequestId, setFulfillingRequestId] = useState(null)
   const fileInputRef = useRef(null)
+  const messagesEndRef = useRef(null)
+  const channelRef = useRef(null)
 
-  const canEdit = project?.status === 'discovery'
+  const canEdit = project?.status === 'solicitado'
 
   useEffect(() => {
     const loadData = async () => {
@@ -62,12 +71,16 @@ export function ProjectDetailPage() {
           notes: found.notes || '',
         })
 
-        const [milestonesRes, filesRes] = await Promise.all([
+        const [milestonesRes, filesRes, msgsRes, fileReqsRes] = await Promise.all([
           getMyProjectMilestones(projectId),
           getProjectFiles(projectId),
+          getProjectMessages(projectId),
+          getProjectFileRequests(projectId),
         ])
         setMilestones(milestonesRes || [])
         setFiles(filesRes || [])
+        setMessages(msgsRes || [])
+        setFileRequests(fileReqsRes || [])
       } catch (err) {
         console.error('Error loading project:', err)
       } finally {
@@ -76,6 +89,23 @@ export function ProjectDetailPage() {
     }
     loadData()
   }, [projectId, navigate])
+
+  useEffect(() => {
+    if (project && activeTab === 'mensajes') {
+      channelRef.current = subscribeToMessages(project.id, (payload) => setMessages(prev => [...prev, payload]))
+    }
+    return () => { if (channelRef.current) channelRef.current.unsubscribe() }
+  }, [project, activeTab])
+
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  const handleSend = async (e) => {
+    e.preventDefault()
+    if (!newMessage.trim() || !project) return
+    const content = newMessage.trim()
+    setNewMessage('')
+    try { await sendProjectMessage(project.id, content) } catch { toast.error('Error enviando mensaje') }
+  }
 
   const handleSaveEdit = async (e) => {
     e.preventDefault()
@@ -150,12 +180,21 @@ export function ProjectDetailPage() {
         toast.error(`Error al subir ${file.name}`)
       } else {
         setFiles(prev => [result.data, ...prev])
+        if (fulfillingRequestId) {
+          const { fulfillFileRequest } = await import('../../services/clientData')
+          await fulfillFileRequest(fulfillingRequestId, result.data.id)
+          setFileRequests(prev => prev.map(r => r.id === fulfillingRequestId ? { ...r, fulfilled: true } : r))
+          setFulfillingRequestId(null)
+          toast.success('Archivo enviado para la solicitud')
+        }
       }
     }
     setUploading(false)
     setFileNote('')
     if (fileInputRef.current) fileInputRef.current.value = ''
-    toast.success(selectedFiles.length > 1 ? `${selectedFiles.length} archivos subidos` : 'Archivo subido')
+    if (!fulfillingRequestId) {
+      toast.success(selectedFiles.length > 1 ? `${selectedFiles.length} archivos subidos` : 'Archivo subido')
+    }
   }
 
   const getFileIcon = (file) => {
@@ -352,6 +391,7 @@ export function ProjectDetailPage() {
       <div className="flex gap-1 bg-dark-900/50 border border-dark-800 rounded-xl p-1">
         {[
           { key: 'info', label: 'Detalles' },
+          { key: 'mensajes', label: 'Mensajes' },
           { key: 'milestones', label: 'Fases' },
           { key: 'files', label: 'Archivos' },
         ].map(tab => (
@@ -452,6 +492,37 @@ export function ProjectDetailPage() {
         </div>
       )}
 
+      {activeTab === 'mensajes' && (
+        <div className="flex flex-col bg-dark-900/50 border border-dark-800 rounded-xl" style={{ height: 'calc(100vh - 22rem)' }}>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {messages.length === 0 ? (
+              <div className="flex items-center justify-center h-full"><p className="text-dark-500 text-sm">No hay mensajes aún</p></div>
+            ) : (
+              messages.map((msg) => {
+                const isMine = msg.sender_id === session?.user?.id
+                return (
+                  <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[70%] px-4 py-2.5 rounded-xl text-sm ${isMine ? 'bg-fizzia-500/20 text-fizzia-300 rounded-br-sm' : 'bg-dark-800 text-dark-200 rounded-bl-sm'}`}>
+                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                      <p className={`text-[10px] mt-1 ${isMine ? 'text-fizzia-500/50' : 'text-dark-500'}`}>
+                        {new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+          <form onSubmit={handleSend} className="p-3 border-t border-dark-800 flex gap-2 shrink-0">
+            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 px-4 py-2.5 bg-dark-950 border border-dark-700 rounded-xl text-white placeholder-dark-500 focus:outline-none focus:border-fizzia-500 text-sm" placeholder="Escribir mensaje..." />
+            <button type="submit" disabled={!newMessage.trim()} className="cursor-pointer px-4 py-2.5 bg-fizzia-500 text-white rounded-xl hover:bg-fizzia-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+              <span className="material-symbols-rounded text-lg">send</span>
+            </button>
+          </form>
+        </div>
+      )}
+
       {activeTab === 'milestones' && (
         <div className="space-y-3">
           {milestones.length === 0 ? (
@@ -490,6 +561,36 @@ export function ProjectDetailPage() {
 
       {activeTab === 'files' && (
         <div className="space-y-4">
+          {/* File requests from admin */}
+          {fileRequests.length > 0 && (
+            <div className="bg-dark-900/50 border border-dark-800 rounded-xl p-5">
+              <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                <span className="material-symbols-rounded text-fizzia-400 text-lg">assignment_turned_in</span>
+                Archivos solicitados por Fizzia
+              </h3>
+              <div className="space-y-2">
+                {fileRequests.map(req => (
+                  <div key={req.id} className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm ${req.fulfilled ? 'bg-green-500/10 border border-green-500/20' : 'bg-dark-950 border border-dark-700'}`}>
+                    <div className="flex-1 min-w-0 mr-3">
+                      <p className={`truncate ${req.fulfilled ? 'text-green-400' : 'text-dark-200'}`}>{req.request_text}</p>
+                      <p className="text-xs text-dark-500 mt-0.5">{formatDate(req.created_at)}</p>
+                    </div>
+                    {req.fulfilled ? (
+                      <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full font-medium shrink-0">Enviado</span>
+                    ) : (
+                      <button
+                        onClick={() => { setFulfillingRequestId(req.id); fileInputRef.current?.click() }}
+                        className="cursor-pointer px-3 py-1.5 bg-fizzia-500 text-white text-xs font-medium rounded-lg hover:bg-fizzia-400 transition-all shrink-0"
+                      >
+                        Enviar archivo
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="bg-dark-900/50 border border-dark-800 rounded-xl p-5">
             <h3 className="text-white font-semibold mb-3">Subir archivos</h3>
             <input

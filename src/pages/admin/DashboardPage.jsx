@@ -5,18 +5,7 @@ import { ProjectCard, ProjectCardSkeleton, EmptyProjects } from '../../component
 import { StatusBadge } from '../../components/ui/'
 import { formatDate } from '../../utils/format'
 
-const WORKING_STATUSES = ['active', 'doing', 'paused', 'review', 'quoted']
-
-const statusLabels = {
-  discovery: 'Solicitud',
-  active: 'En desarrollo',
-  doing: 'En progreso',
-  paused: 'Pausado',
-  delivered: 'Entregado',
-  cancelled: 'Cancelado',
-  review: 'Revisión',
-  quoted: 'Cotizado',
-}
+const WORKING_STATUSES = ['preparando', 'trabajando', 'pausado']
 
 export function DashboardPage() {
   const { data, loading, error, refreshData } = useDashboardData()
@@ -37,7 +26,7 @@ export function DashboardPage() {
   const activeClients = data?.clients?.filter(c => c.status === 'active') || []
 
   const workingProjects = projects.filter(p => WORKING_STATUSES.includes(p.status))
-  const requests = projects.filter(p => p.status === 'discovery')
+  const requests = projects.filter(p => p.status === 'solicitado')
 
   return (
     <div className="space-y-6">
@@ -100,7 +89,7 @@ export function DashboardPage() {
                     <p className="text-white font-medium">${Number(project.budget || 0).toLocaleString()}</p>
                     <p className="text-dark-500 text-xs">{formatDate(project.created_at)}</p>
                   </div>
-                  <StatusBadge status="discovery" size="sm" />
+                  <StatusBadge status="solicitado" size="sm" />
                   <span className="material-symbols-rounded text-dark-500 group-hover:text-fizzia-400 transition-colors shrink-0">chevron_right</span>
                 </Link>
               ))}
