@@ -1,5 +1,11 @@
 import { supabase } from './supabase'
 
+function cacheBust(url) {
+  if (!url) return url
+  const [base] = url.split('?')
+  return `${base}?t=${Date.now()}`
+}
+
 async function getCurrentUserId() {
   const { data } = await supabase.auth.getUser()
   return data?.user?.id
@@ -11,6 +17,9 @@ export async function getProfile(userId) {
     .select('*')
     .eq('id', userId)
     .single()
+  if (data?.avatar_url) {
+    data.avatar_url = cacheBust(data.avatar_url)
+  }
   return data
 }
 
@@ -22,6 +31,9 @@ export async function getMyProfile() {
     .select('*')
     .eq('id', userId)
     .maybeSingle()
+  if (data?.avatar_url) {
+    data.avatar_url = cacheBust(data.avatar_url)
+  }
   return data
 }
 
@@ -85,15 +97,195 @@ export async function getMyFiles() {
 
 export async function updateProfile(payload) {
   const userId = await getCurrentUserId()
-  if (!userId) return null
+  if (!userId) return { data: null, error: 'No se pudo identificar tu usuario' }
+
   const cleaned = Object.fromEntries(
-    Object.entries(payload).filter(([, v]) => v !== null && v !== undefined && v !== '')
+    Object.entries(payload)
+      .filter(([k, v]) => k !== 'email' && v !== null && v !== undefined && v !== '')
   )
-  const { data } = await supabase
+
+  if (Object.keys(cleaned).length === 0) {
+    return { data: null, error: null }
+  }
+
+  const { data, error } = await supabase
     .from('profiles')
     .update(cleaned)
     .eq('id', userId)
     .select()
     .maybeSingle()
+
+  return { data: data ? { ...data, avatar_url: data.avatar_url ? cacheBust(data.avatar_url) : null } : null, error }
+}
+
+export async function updatePassword(currentPassword, newPassword) {
+  const { data, error } = await supabase.auth.updateUser({
+    password: newPassword
+  })
+  return { data, error }
+}
+
+export async function getProjectMessages(projectId) {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true })
+  if (error) console.error('Error fetching messages:', error)
+  return data || []
+}
+
+export async function sendProjectMessage(projectId, content) {
+  const userId = await getCurrentUserId()
+  if (!userId) return null
+  const { data, error } = await supabase
+    .from('messages')
+    .insert({ project_id: projectId, sender_id: userId, content })
+    .select()
+    .single()
+  if (error) console.error('Error sending message:', error)
   return data
+}
+
+export function subscribeToMessages(projectId, callback) {
+  return supabase
+    .channel(`messages:${projectId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
+      (payload) => callback(payload.new)
+    )
+    .subscribe()
+}
+
+export async function getProjectFiles(projectId) {
+  const { data } = await supabase
+    .from('project_files')
+    .select('*')
+    .eq('project_id', projectId)
+    .in('visibility', ['client', 'public'])
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function createProjectRequest(name, description, budget, details) {
+  const userId = await getCurrentUserId()
+  if (!userId) return { project: null, error: 'No se pudo identificar tu usuario' }
+
+  let client = await getMyClient()
+
+  if (!client) {
+    const profile = await getProfile(userId)
+    const clientName = profile?.full_name || profile?.email || 'Cliente'
+    const { data: newClient, error: clientError } = await supabase
+      .from('clients')
+      .insert({
+        name: clientName,
+        email: profile?.email || '',
+        phone: profile?.phone || '',
+        status: 'active'
+      })
+      .select()
+      .single()
+
+    if (clientError || !newClient) {
+      console.error('Error creating client:', clientError)
+      return { project: null, error: clientError?.message || 'No se pudo crear tu perfil de cliente' }
+    }
+
+    const { error: linkError } = await supabase
+      .from('client_users')
+      .insert({ user_id: userId, client_id: newClient.id })
+
+    if (linkError) {
+      console.error('Error linking client:', linkError)
+      return { project: null, error: 'No se pudo vincular tu cuenta' }
+    }
+
+    client = newClient
+  }
+
+  const { data, error: projectError } = await supabase
+    .from('projects')
+    .insert({
+      client_id: client.id,
+      name,
+      description: details ? `${description}\n\n${details}` : description,
+      status: 'discovery',
+      budget: budget || 0,
+    })
+    .select()
+    .single()
+
+  if (projectError) {
+    console.error('Error creating project:', projectError)
+    return { project: null, error: projectError.message }
+  }
+
+  return { project: data, error: null }
+}
+
+export async function uploadProjectFile(projectId, file, uploaderId = null, note = '') {
+  const userId = uploaderId || await getCurrentUserId()
+  if (!userId) return { data: null, error: 'No autenticado' }
+
+  const fileExt = file.name.split('.').pop()
+  const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${fileExt}`
+  const filePath = `${projectId}/${fileName}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('project-files')
+    .upload(filePath, file, { contentType: file.type, cacheControl: '3600' })
+
+  if (uploadError) return { data: null, error: uploadError }
+
+  const { data: publicUrl } = supabase.storage
+    .from('project-files')
+    .getPublicUrl(filePath)
+
+  const { data, error } = await supabase
+    .from('project_files')
+    .insert({
+      project_id: projectId,
+      uploader_id: userId,
+      file_name: file.name,
+      file_url: publicUrl.publicUrl,
+      storage_path: filePath,
+      file_type: file.type,
+      file_size: file.size,
+      visibility: 'client',
+      note,
+    })
+    .select()
+    .single()
+
+  return { data, error }
+}
+
+export async function uploadProfilePhoto(userId, file) {
+  const filePath = `${userId}.jpg`
+
+  await supabase.storage.from('avatars').remove([filePath])
+
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(filePath, file, { contentType: file.type, upsert: true })
+
+  if (uploadError) {
+    console.error('Storage upload error:', uploadError)
+    return { url: null, error: uploadError }
+  }
+
+  const { data: publicUrl } = supabase.storage
+    .from('avatars')
+    .getPublicUrl(filePath)
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({ avatar_url: publicUrl.publicUrl })
+    .eq('id', userId)
+    .select()
+    .single()
+
+  return { url: data?.avatar_url ? cacheBust(data.avatar_url) : cacheBust(publicUrl.publicUrl), error }
 }

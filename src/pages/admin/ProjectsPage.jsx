@@ -3,6 +3,8 @@ import { StatusBadge, EmptyState, Skeleton } from '../../components/ui/'
 import { formatMoney, formatDate } from '../../utils/format'
 import { getAllProjects } from '../../services/adminData'
 
+const FINISHED_STATUSES = ['delivered', 'cancelled']
+
 export function ProjectsPage() {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
@@ -23,35 +25,25 @@ export function ProjectsPage() {
     loadProjects()
   }, [])
 
-  const filtered = statusFilter === 'all' ? projects : projects.filter(p => p.status === statusFilter)
-
-  const summary = {
-    total: projects.length,
-    active: projects.filter(p => p.status === 'active').length,
-    delivered: projects.filter(p => p.status === 'delivered').length,
-    budget: projects.reduce((sum, p) => sum + (p.budget || 0), 0)
-  }
+  const finished = projects.filter(p => FINISHED_STATUSES.includes(p.status))
+  const filtered = statusFilter === 'all' ? finished : finished.filter(p => p.status === statusFilter)
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold text-white mb-6">Proyectos</h1>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        {[
-          { label: 'Total Proyectos', value: summary.total },
-          { label: 'Activos', value: summary.active },
-          { label: 'Entregados', value: summary.delivered },
-          { label: 'Presupuesto Total', value: formatMoney(summary.budget), isMoney: false }
-        ].map((item, i) => (
-          <div key={i} className="rounded-lg border border-dark-700 bg-dark-900 p-4">
-            <p className="text-sm text-dark-400">{item.label}</p>
-            <p className="text-2xl font-bold text-white mt-1">{item.value}</p>
-          </div>
-        ))}
-      </div>
+      <h1 className="text-2xl font-bold text-white mb-6">Proyectos Cerrados</h1>
 
       <div className="flex gap-2 mb-4">
-        {['all', 'active', 'paused', 'delivered', 'cancelled'].map((status) => (
+        <button
+          onClick={() => setStatusFilter('all')}
+          className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+            statusFilter === 'all'
+              ? 'bg-fizzia-500 text-white'
+              : 'bg-dark-800 text-dark-300 hover:text-white'
+          }`}
+        >
+          Todos
+        </button>
+        {FINISHED_STATUSES.map((status) => (
           <button
             key={status}
             onClick={() => setStatusFilter(status)}
@@ -61,7 +53,7 @@ export function ProjectsPage() {
                 : 'bg-dark-800 text-dark-300 hover:text-white'
             }`}
           >
-            {status === 'all' ? 'Todos' : status}
+            {status === 'delivered' ? 'Entregados' : status === 'cancelled' ? 'Cancelados' : status}
           </button>
         ))}
       </div>
@@ -99,7 +91,7 @@ export function ProjectsPage() {
           </table>
         ) : (
           <div className="p-8">
-            <EmptyState message="No hay proyectos" />
+            <EmptyState message="No hay proyectos cerrados" />
           </div>
         )}
       </div>

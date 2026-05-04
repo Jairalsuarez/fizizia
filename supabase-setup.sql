@@ -284,6 +284,9 @@ CREATE POLICY "Admin/Manager can manage clients"
     )
   );
 
+CREATE POLICY "Users can create their own client record"
+  ON clients FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
 -- CLIENT_USERS policies
 CREATE POLICY "Users can view their own client links"
   ON client_users FOR SELECT USING (user_id = auth.uid());
@@ -294,6 +297,9 @@ CREATE POLICY "Admin/Manager can manage client links"
       SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager')
     )
   );
+
+CREATE POLICY "Users can create their own client link"
+  ON client_users FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- PROJECTS policies
 CREATE POLICY "Clients can view their projects"

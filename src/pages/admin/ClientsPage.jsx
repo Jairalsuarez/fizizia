@@ -5,11 +5,13 @@ import { deleteClient } from '../../services/adminData'
 import ClientList from '../../features/clients/ClientList'
 import ClientDetail from '../../features/clients/ClientDetail'
 import ClientForm from '../../features/clients/ClientForm'
+import { useToast } from '../../components/Toast'
 
 export function ClientsPage() {
   const [selectedClient, setSelectedClient] = useState(null)
   const [showForm, setShowForm] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const toast = useToast()
 
   const handleClientSaved = () => {
     setShowForm(false)
@@ -17,9 +19,15 @@ export function ClientsPage() {
   }
 
   const handleDelete = async () => {
-    await deleteClient(selectedClient.id)
+    const { error } = await deleteClient(selectedClient.id)
+    if (error) {
+      toast.error('Error al eliminar: ' + error.message)
+      return
+    }
     setShowDeleteModal(false)
     setSelectedClient(null)
+    toast.success('Cliente eliminado')
+    window.location.reload()
   }
 
   return (

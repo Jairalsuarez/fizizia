@@ -8,7 +8,10 @@ export function ProtectedRoute({ role }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-dark-950">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-fizzia-500"></div>
+        <div className="text-center space-y-4">
+          <img src="/images/Solo la figura del logo.png" alt="Fizzia" className="h-12 w-auto mx-auto" />
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-fizzia-500 mx-auto"></div>
+        </div>
       </div>
     )
   }

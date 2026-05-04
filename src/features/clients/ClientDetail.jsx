@@ -4,16 +4,23 @@ import { formatMoney } from '../../utils/format'
 import { deleteClient } from '../../services/adminData'
 import ProjectForm from './ProjectForm'
 import ChargeForm from '../finance/ChargeForm'
+import { useToast } from '../../components/Toast'
 
 export default function ClientDetail({ client, onUpdate }) {
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [showChargeForm, setShowChargeForm] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const toast = useToast()
 
   const handleDelete = async () => {
-    await deleteClient(client.id)
+    const { error } = await deleteClient(client.id)
+    if (error) {
+      toast.error('Error al eliminar: ' + error.message)
+      return
+    }
     setShowDeleteModal(false)
     onUpdate()
+    toast.success('Cliente eliminado')
   }
 
   return (

@@ -16,28 +16,34 @@ export function signUp(email, password, fullName, metadata) {
   return supabase.auth.signUp({
     email,
     password,
-    options: { data: { full_name: fullName, ...metadata } }
+    options: { data: { full_name: fullName, role: 'client', ...metadata } }
   })
 }
 
 export async function checkEmailExists(email) {
-  const { data } = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('email', email)
-    .limit(1)
-  return (data?.length || 0) > 0
+  const { data, error } = await supabase.rpc('check_email_exists', { check_email: email })
+  if (error) {
+    console.error('RPC error:', error)
+    return false
+  }
+  return data || false
 }
 
 export async function signOut() {
   return supabase.auth.signOut()
 }
 
+export function resetPassword(email) {
+  return supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/login`,
+  })
+}
+
 export async function loadDashboardData() {
   const [clients, projects, invoices, payments, expenses, leads, appointments] =
     await Promise.all([
       supabase.from('clients').select('*').order('created_at', { ascending: false }).limit(80),
-      supabase.from('projects').select('*').order('created_at', { ascending: false }).limit(80),
+      supabase.from('projects').select('*, clients(name)').order('created_at', { ascending: false }).limit(80),
       supabase.from('invoices').select('*').order('created_at', { ascending: false }).limit(80),
       supabase.from('payments').select('*').order('created_at', { ascending: false }).limit(80),
       supabase.from('expenses').select('*').order('created_at', { ascending: false }).limit(80),
@@ -74,9 +80,44 @@ export async function createProject(payload) {
   return supabase.from('projects').insert(cleaned).select().single()
 }
 
+export async function updateProject(id, payload) {
+  const cleaned = cleanPayload(payload)
+  return supabase.from('projects').update(cleaned).eq('id', id).select().single()
+}
+
+export async function updateLead(id, payload) {
+  const cleaned = cleanPayload(payload)
+  return supabase.from('leads').update(cleaned).eq('id', id).select().single()
+}
+
+export async function convertLeadToInformal(lead) {
+  const { data: client } = await createClient({
+    name: lead.full_name,
+    email: lead.email,
+    phone: lead.phone,
+    city: lead.city,
+    source: lead.source || 'informal',
+    notes: lead.notes || `Lead informal - ${lead.need_summary || 'Sin resumen'}`,
+  })
+
+  await supabase.from('leads').update({ status: 'informal' }).eq('id', lead.id)
+
+  return client
+}
+
+export async function createInformalProject(clientId, projectData) {
+  return createProject({
+    client_id: clientId,
+    name: projectData.name,
+    description: projectData.description,
+    budget: projectData.budget,
+    status: 'discovery',
+  })
+}
+
 export async function convertLeadToClient(lead) {
   const { data: client } = await createClient({
-    full_name: lead.full_name,
+    name: lead.full_name,
     email: lead.email,
     phone: lead.phone,
     company: lead.company,
@@ -159,6 +200,55 @@ export async function getAllProjects() {
   return data || []
 }
 
+export async function getProjectsWithMessages() {
+  const { data } = await supabase
+    .from('projects')
+    .select('*')
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function getAdminProjectMessages(projectId) {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true })
+  if (error) console.error('Error fetching admin messages:', error)
+  return data || []
+}
+
+export async function sendAdminMessage(projectId, content) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+  const { data } = await supabase
+    .from('messages')
+    .insert({ project_id: projectId, sender_id: user.id, content, is_admin_sender: true })
+    .select()
+    .single()
+  return data
+}
+
+export function subscribeToAdminMessages(projectId, callback) {
+  return supabase
+    .channel(`admin-messages:${projectId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
+      (payload) => callback(payload.new)
+    )
+    .subscribe()
+}
+
+export async function getPendingProjectRequests() {
+  const { data } = await supabase
+    .from('projects')
+    .select('*, clients(name)')
+    .eq('status', 'discovery')
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
 export async function getOpenCharges() {
   const { data } = await supabase
     .from('invoices')
@@ -211,4 +301,123 @@ export function cleanPayload(payload) {
   return Object.fromEntries(
     Object.entries(payload).filter(([, v]) => v !== null && v !== undefined && v !== '')
   )
+}
+
+export async function uploadProjectFileAdmin(projectId, file, note = '') {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { data: null, error: 'No autenticado' }
+
+  const fileExt = file.name.split('.').pop()
+  const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${fileExt}`
+  const filePath = `${projectId}/${fileName}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('project-files')
+    .upload(filePath, file, { contentType: file.type, cacheControl: '3600' })
+
+  if (uploadError) return { data: null, error: uploadError }
+
+  const { data: publicUrl } = supabase.storage
+    .from('project-files')
+    .getPublicUrl(filePath)
+
+  const { data, error } = await supabase
+    .from('project_files')
+    .insert({
+      project_id: projectId,
+      uploader_id: user.id,
+      file_name: file.name,
+      file_url: publicUrl.publicUrl,
+      storage_path: filePath,
+      file_type: file.type,
+      file_size: file.size,
+      visibility: 'client',
+      note,
+    })
+    .select()
+    .single()
+
+  return { data, error }
+}
+
+export async function getAllProjectFiles(projectId) {
+  const { data } = await supabase
+    .from('project_files')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function deleteProjectFile(fileId, storagePath) {
+  if (storagePath) {
+    await supabase.storage.from('project-files').remove([storagePath])
+  }
+  return supabase.from('project_files').delete().eq('id', fileId)
+}
+
+export async function getProjectInvoices(projectId) {
+  const { data } = await supabase
+    .from('invoices')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function getProjectPayments(projectId) {
+  const { data: invoices } = await supabase
+    .from('invoices')
+    .select('id')
+    .eq('project_id', projectId)
+  const invoiceIds = invoices.map(i => i.id)
+  if (!invoiceIds.length) return []
+  const { data } = await supabase
+    .from('payments')
+    .select('*, invoices(invoice_number)')
+    .in('invoice_id', invoiceIds)
+    .order('paid_at', { ascending: false })
+  return data || []
+}
+
+export async function getProjectInvoicesWithPayments(projectId) {
+  const { data } = await supabase
+    .from('invoices')
+    .select('*, payments(*)')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function getProjectMilestones(projectId) {
+  const { data } = await supabase
+    .from('project_milestones')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('sort_order')
+  return data || []
+}
+
+export async function createMilestone(payload) {
+  const cleaned = cleanPayload(payload)
+  return supabase.from('project_milestones').insert(cleaned).select().single()
+}
+
+export async function updateMilestone(id, payload) {
+  const cleaned = cleanPayload(payload)
+  return supabase.from('project_milestones').update(cleaned).eq('id', id).select().single()
+}
+
+export async function deleteMilestone(id) {
+  return supabase.from('project_milestones').delete().eq('id', id)
+}
+
+export async function createInvoiceForProject(payload) {
+  const cleaned = cleanPayload(payload)
+  const { data } = await supabase
+    .from('invoices')
+    .insert(cleaned)
+    .select()
+    .single()
+  return data
 }
