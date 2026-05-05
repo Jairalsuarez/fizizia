@@ -122,12 +122,10 @@ export function ProjectPage() {
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
-                {selectedProject.budget && (
-                  <div className="bg-dark-800 p-4 rounded-lg">
-                    <p className="text-dark-400 text-sm">Budget</p>
-                    <p className="text-white font-semibold mt-1">
-                      {formatMoney(selectedProject.budget)}
-                    </p>
+                {(selectedProject.final_price || selectedProject.budget) && (
+                  <div>
+                    <p className="text-xs text-dark-500 mb-1">{selectedProject.final_price ? 'Precio' : 'Presupuesto'}</p>
+                    <p className="text-white font-semibold">{formatMoney(selectedProject.final_price || selectedProject.budget)}</p>
                   </div>
                 )}
                 {selectedProject.start_date && (

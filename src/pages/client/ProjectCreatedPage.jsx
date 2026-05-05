@@ -47,10 +47,10 @@ export function ProjectCreatedPage() {
         {project.description && (
           <p className="text-dark-400 text-sm line-clamp-3 mb-4 whitespace-pre-wrap">{project.description}</p>
         )}
-        {project.budget && (
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-dark-500">Presupuesto:</span>
-            <span className="text-white font-semibold">${Number(project.budget).toLocaleString()}</span>
+        {(project.final_price || project.budget) && (
+          <div>
+            <p className="text-xs text-dark-500">Total</p>
+            <span className="text-white font-semibold">${Number(project.final_price || project.budget).toLocaleString()}</span>
           </div>
         )}
       </div>

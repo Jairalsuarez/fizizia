@@ -23,6 +23,7 @@ import { FinancesPage as ClientFinancesPage } from './pages/client/FinancesPage'
 import { FilesPage as ClientFilesPage } from './pages/client/FilesPage'
 import { ProfilePage as ClientProfilePage } from './pages/client/ProfilePage'
 import { SettingsPage as ClientSettingsPage } from './pages/client/SettingsPage'
+import { PaymentsPage as AdminPaymentsPage } from './pages/admin/PaymentsPage'
 import { LandingPage } from './pages/LandingPage'
 
 function App() {
@@ -45,6 +46,7 @@ function App() {
               <Route path="/admin/clientes" element={<AdminClientsPage />} />
               <Route path="/admin/proyectos" element={<AdminProjectRequestsPage />} />
               <Route path="/admin/mensajes" element={<AdminMessagesPage />} />
+              <Route path="/admin/pagos" element={<AdminPaymentsPage />} />
               <Route path="/admin/finanzas" element={<AdminFinancePage />} />
             </Route>
           </Route>

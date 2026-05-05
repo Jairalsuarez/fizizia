@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/authContext'
 import { FloatingChat } from '../components/FloatingChat'
 import { NotificationBell } from '../components/NotificationBell'
+import { AvatarIcon } from '../data/avatars.jsx'
 
 const navItems = [
   { to: '/cliente', label: 'Mi Panel', icon: 'dashboard' },
@@ -11,6 +12,7 @@ const navItems = [
 
 export function ClientLayout() {
   const { signOut, session, user } = useAuth()
+  const navigate = useNavigate()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const dropdownRef = useRef(null)
@@ -30,12 +32,7 @@ export function ClientLayout() {
     navigate('/login')
   }
 
-  const initials = user?.full_name
-    ? user.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-    : user?.first_name
-      ? user.first_name[0].toUpperCase()
-      : 'U'
-
+  const avatarId = user?.avatar_id || '1'
   const email = session?.user?.email || ''
 
   return (
@@ -77,10 +74,8 @@ export function ClientLayout() {
                 onClick={() => setDropdownOpen(!dropdownOpen)}
                 className="cursor-pointer flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-lg hover:bg-dark-800 transition-colors"
               >
-                <div className="w-8 h-8 rounded-full bg-fizzia-500/20 border border-fizzia-500/30 flex items-center justify-center text-fizzia-400 text-xs font-bold overflow-hidden">
-                  {user?.avatar_url ? (
-                    <img key={user.avatar_url} src={user.avatar_url} alt="" className="w-full h-full object-cover" />
-                  ) : initials}
+                <div className="w-8 h-8 rounded-full overflow-hidden bg-white">
+                  <AvatarIcon id={avatarId} size={32} />
                 </div>
                 <span className="material-symbols-rounded text-dark-400 text-lg">expand_more</span>
               </button>
@@ -88,10 +83,8 @@ export function ClientLayout() {
                 {dropdownOpen && (
                   <div className="absolute right-0 top-full mt-2 w-64 bg-dark-900 border border-dark-700 rounded-xl shadow-2xl z-[100] overflow-hidden">
                     <div className="p-4 border-b border-dark-700 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-fizzia-500/20 border border-fizzia-500/30 flex items-center justify-center text-fizzia-400 text-sm font-bold overflow-hidden shrink-0">
-                        {user?.avatar_url ? (
-                          <img key={user.avatar_url} src={user.avatar_url} alt="" className="w-full h-full object-cover" />
-                        ) : initials}
+                      <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 bg-white">
+                        <AvatarIcon id={avatarId} size={40} />
                       </div>
                       <div className="min-w-0">
                         <p className="text-white text-sm font-semibold truncate">{user?.full_name || user?.first_name || 'Usuario'}</p>

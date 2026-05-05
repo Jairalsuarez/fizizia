@@ -187,9 +187,16 @@ export async function createExpense(payload) {
 export async function getAllClients() {
   const { data } = await supabase
     .from('clients')
-    .select('*')
+    .select(`
+      *,
+      projects:projects(count)
+    `)
     .order('created_at', { ascending: false })
-  return data || []
+  return (data || []).map(c => ({
+    ...c,
+    project_count: c.projects?.[0]?.count || 0,
+    projects: undefined,
+  }))
 }
 
 export async function getAllProjects() {
@@ -420,4 +427,137 @@ export async function createInvoiceForProject(payload) {
     .select()
     .single()
   return data
+}
+
+export async function getAllPendingPayments() {
+  const { data } = await supabase
+    .from('payments')
+    .select(`
+      *,
+      projects(name, final_price, budget, client_id),
+      clients(name, email)
+    `)
+    .eq('admin_status', 'pending')
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function getAllPayments() {
+  console.log('Fetching all payments...')
+  const { data, error } = await supabase
+    .from('payments')
+    .select(`
+      *,
+      projects!left(name, final_price, budget, client_id),
+      clients!left(name, email)
+    `)
+    .order('created_at', { ascending: false })
+  console.log('Payments result:', data?.length, 'rows, error:', error)
+  return data || []
+}
+
+export async function approvePayment(paymentId, reviewedBy) {
+  const { data } = await supabase
+    .from('payments')
+    .update({
+      admin_status: 'approved',
+      admin_reviewed_at: new Date().toISOString(),
+      admin_reviewed_by: reviewedBy,
+    })
+    .eq('id', paymentId)
+    .select()
+    .single()
+  return { data, error: data ? null : { message: 'Error aprobando pago' } }
+}
+
+export async function rejectPayment(paymentId, reviewedBy, reason) {
+  const { data } = await supabase
+    .from('payments')
+    .update({
+      admin_status: 'rejected',
+      admin_reviewed_at: new Date().toISOString(),
+      admin_reviewed_by: reviewedBy,
+      admin_rejection_reason: reason,
+    })
+    .eq('id', paymentId)
+    .select()
+    .single()
+  return { data, error: data ? null : { message: 'Error rechazando pago' } }
+}
+
+export async function getProjectTasks(projectId) {
+  const { data } = await supabase
+    .from('project_tasks')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('sort_order')
+  return data || []
+}
+
+export async function createProjectTask(payload) {
+  const cleaned = cleanPayload(payload)
+  return supabase.from('project_tasks').insert(cleaned).select().single()
+}
+
+export async function updateProjectTask(id, payload) {
+  const cleaned = cleanPayload(payload)
+  return supabase.from('project_tasks').update(cleaned).eq('id', id).select().single()
+}
+
+export async function deleteProjectTask(id) {
+  return supabase.from('project_tasks').delete().eq('id', id)
+}
+
+export async function getProjectFileRequests(projectId) {
+  const { data } = await supabase
+    .from('project_file_requests')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function createProjectFileRequest(projectId, requestText) {
+  const { data } = await supabase
+    .from('project_file_requests')
+    .insert({ project_id: projectId, request_text: requestText })
+    .select()
+    .single()
+  return data
+}
+
+export async function deleteProjectFileRequest(id) {
+  return supabase.from('project_file_requests').delete().eq('id', id)
+}
+
+export async function updateClient(id, payload) {
+  const cleaned = cleanPayload(payload)
+  return supabase.from('clients').update(cleaned).eq('id', id).select().single()
+}
+
+export async function getAllClientProjects(clientId) {
+  const { data } = await supabase
+    .from('projects')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function uploadPaymentProof(file) {
+  const fileExt = file.name.split('.').pop()
+  const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${fileExt}`
+  const filePath = `payment-proofs/${fileName}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('project-files')
+    .upload(filePath, file, { contentType: file.type, cacheControl: '3600' })
+
+  if (uploadError) return { data: null, error: uploadError }
+
+  const { data: publicUrl } = supabase.storage
+    .from('project-files')
+    .getPublicUrl(filePath)
+
+  return { data: publicUrl.publicUrl, error: null }
 }

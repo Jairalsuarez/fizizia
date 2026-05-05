@@ -50,7 +50,8 @@ export function ProjectRequestsPage() {
 
       await updateProject(selectedRequest.id, {
         status: reviewForm.projectType || 'preparando',
-        budget: reviewForm.budget ? Number(reviewForm.budget) : selectedRequest.budget,
+        budget: selectedRequest.budget,
+        final_price: reviewForm.budget ? Number(reviewForm.budget) : selectedRequest.final_price,
         start_date: reviewForm.startDate || null,
         due_date: reviewForm.dueDate || null,
         notes: reviewForm.notes || selectedRequest.notes,
@@ -83,7 +84,7 @@ export function ProjectRequestsPage() {
   const openReview = (request) => {
     setSelectedRequest(request)
     setReviewForm({
-      budget: request.budget || '',
+      budget: request.final_price || request.budget || '',
       startDate: request.start_date || '',
       dueDate: request.due_date || '',
       notes: request.notes || '',
@@ -162,7 +163,7 @@ export function ProjectRequestsPage() {
                   </div>
                   <div className="flex items-center gap-3 text-sm text-dark-400">
                     {project.clients?.name && <span>{project.clients.name}</span>}
-                    {project.budget && <span>· {formatMoney(project.budget)}</span>}
+                    {(project.final_price || project.budget) && <span>· {formatMoney(project.final_price || project.budget)}</span>}
                     <span>· {formatDate(project.created_at)}</span>
                   </div>
                   {project.description && (

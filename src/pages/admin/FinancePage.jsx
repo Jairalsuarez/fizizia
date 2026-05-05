@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Button, Modal, Skeleton, EmptyState } from '../../components/ui/'
 import { formatMoney } from '../../utils/format'
 import { useDashboardData } from '../../hooks/useDashboardData'
@@ -7,6 +8,7 @@ import ExpenseForm from '../../features/finance/ExpenseForm'
 import ChargeForm from '../../features/finance/ChargeForm'
 
 export function FinancePage() {
+  const navigate = useNavigate()
   const { data, loading, refetch } = useDashboardData()
   const [showExpenseForm, setShowExpenseForm] = useState(false)
   const [showChargeForm, setShowChargeForm] = useState(false)
@@ -15,7 +17,10 @@ export function FinancePage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Finanzas</h1>
-        <Button onClick={() => setShowExpenseForm(true)}>Agregar Egreso</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/admin/pagos')}>Ver Pagos</Button>
+          <Button onClick={() => setShowExpenseForm(true)}>Agregar Egreso</Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

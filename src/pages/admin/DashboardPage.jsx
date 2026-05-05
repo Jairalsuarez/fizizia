@@ -86,7 +86,7 @@ export function DashboardPage() {
                     <p className="text-dark-400 text-sm">{project.clients?.name || 'Sin cliente'}</p>
                   </div>
                   <div className="hidden sm:block text-right shrink-0">
-                    <p className="text-white font-medium">${Number(project.budget || 0).toLocaleString()}</p>
+                    <p className="text-white font-medium">${Number(project.final_price || project.budget || 0).toLocaleString()}</p>
                     <p className="text-dark-500 text-xs">{formatDate(project.created_at)}</p>
                   </div>
                   <StatusBadge status="solicitado" size="sm" />

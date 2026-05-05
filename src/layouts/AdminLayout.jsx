@@ -10,7 +10,8 @@ const navItems = [
   { to: '/admin/clientes', label: 'Clientes', icon: 'groups' },
   { to: '/admin/proyectos', label: 'Proyectos', icon: 'folder' },
   { to: '/admin/mensajes', label: 'Mensajes', icon: 'chat' },
-  { to: '/admin/finanzas', label: 'Finanzas', icon: 'payments' },
+  { to: '/admin/pagos', label: 'Pagos', icon: 'payments' },
+  { to: '/admin/finanzas', label: 'Finanzas', icon: 'account_balance_wallet' },
 ]
 
 export function AdminLayout() {

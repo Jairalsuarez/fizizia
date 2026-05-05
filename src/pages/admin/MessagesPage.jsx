@@ -165,8 +165,8 @@ export function MessagesPage() {
                     {statusLabels[project.status] || project.status}
                   </span>
                 </div>
-                {project.budget && (
-                  <p className="text-dark-500 text-xs mt-1">${Number(project.budget).toLocaleString()}</p>
+                {(project.final_price || project.budget) && (
+                  <p className="text-dark-500 text-xs mt-1">${Number(project.final_price || project.budget).toLocaleString()}</p>
                 )}
               </button>
             ))

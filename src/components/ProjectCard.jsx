@@ -40,8 +40,8 @@ export function ProjectCard({ project, clientName, to, showClient = false, showD
         </p>
       )}
       <div className="flex items-center gap-3 text-xs text-dark-500">
-        {showBudget && project.budget && <span>${Number(project.budget).toLocaleString()}</span>}
-        {showClient && clientName && project.budget && <span>•</span>}
+        {showBudget && (project.final_price || project.budget) && <span>${Number(project.final_price || project.budget).toLocaleString()}</span>}
+        {showClient && clientName && (project.final_price || project.budget) && <span>•</span>}
         {showDate && project.due_date && <span>Entrega: {formatDate(project.due_date)}</span>}
         {showDate && project.created_at && !project.due_date && <span>{formatDate(project.created_at)}</span>}
       </div>

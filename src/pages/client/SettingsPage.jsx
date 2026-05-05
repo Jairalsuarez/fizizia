@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../../features/auth/authContext'
 import { supabase } from '../../services/supabase'
-import { updateProfile, updatePassword, getMyProfile, uploadProfilePhoto } from '../../services/clientData'
+import { updateProfile, updatePassword, getMyProfile } from '../../services/clientData'
 import { useToast } from '../../components/Toast'
-import { CropModal, getUploadWarning, MAX_SIZE_MB } from '../../components/CropModal'
+import { avatars, AvatarIcon } from '../../data/avatars.jsx'
 
 export function SettingsPage() {
   const { session, updateUser } = useAuth()
@@ -14,10 +14,8 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
-  const [uploadingPhoto, setUploadingPhoto] = useState(false)
-  const [pendingFile, setPendingFile] = useState(null)
-  const [fileWarning, setFileWarning] = useState(null)
-  const photoInputRef = useRef(null)
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
+  const [previewAvatarId, setPreviewAvatarId] = useState(null)
   const [formData, setFormData] = useState({ full_name: '', phone: '' })
   const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' })
   const [showPasswords, setShowPasswords] = useState({ current: false, new: false, confirm: false })
@@ -38,8 +36,7 @@ export function SettingsPage() {
   }, [])
 
   const displayName = profile?.full_name || 'Usuario'
-  const displayAvatar = profile?.avatar_url
-  const initials = displayName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+  const selectedAvatarId = profile?.avatar_id || '1'
 
   const handleSaveProfile = async (e) => {
     e.preventDefault()
@@ -91,60 +88,20 @@ export function SettingsPage() {
     }
   }
 
-  const handlePhotoSelect = (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const warning = getUploadWarning(file)
-    if (warning) {
-      setFileWarning(warning)
-      setTimeout(() => setFileWarning(null), 4000)
-      if (photoInputRef.current) photoInputRef.current.value = ''
-      return
-    }
-    setFileWarning(null)
-    setPendingFile(file)
-    if (photoInputRef.current) photoInputRef.current.value = ''
-  }
-
-  const handlePhotoConfirm = async (croppedFile) => {
-    setPendingFile(null)
-    setUploadingPhoto(true)
-    setError('')
-    setSuccess('')
-    try {
-      const { url, error: err } = await uploadProfilePhoto(session.user.id, croppedFile)
-      setUploadingPhoto(false)
-      if (err) throw err
-      setProfile(prev => ({ ...prev, avatar_url: url }))
-      updateUser({ avatar_url: url })
-      toast.success('Foto de perfil actualizada')
-    } catch (err) {
-      setUploadingPhoto(false)
-      setError(err.message || 'Error al subir la foto')
-    }
-  }
-
-  const handlePhotoCancel = () => {
-    setPendingFile(null)
-  }
-
-  const removePhoto = async () => {
-    if (!session?.user?.id) return
-    setUploadingPhoto(true)
+  const handleSelectAvatar = async (avatarId) => {
     try {
       const { error: err } = await supabase
         .from('profiles')
-        .update({ avatar_url: null })
+        .update({ avatar_id: avatarId })
         .eq('id', session.user.id)
       if (err) throw err
-      setProfile(prev => ({ ...prev, avatar_url: null }))
-      updateUser({ avatar_url: null })
-      await supabase.storage.from('avatars').remove([`${session.user.id}.jpg`])
-      toast.success('Foto eliminada')
+      setProfile(prev => ({ ...prev, avatar_id: avatarId }))
+      updateUser({ avatar_id: avatarId })
+      toast.success('Avatar actualizado')
+      setShowAvatarPicker(false)
+      setPreviewAvatarId(null)
     } catch {
-      setError('Error al eliminar la foto')
-    } finally {
-      setUploadingPhoto(false)
+      toast.error('Error al actualizar avatar')
     }
   }
 
@@ -211,78 +168,28 @@ export function SettingsPage() {
         </div>
       )}
 
-      {fileWarning && (
-        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-yellow-400 text-sm text-center">
-          {fileWarning}
-          <p className="text-yellow-400/70 text-xs mt-1">Máximo {MAX_SIZE_MB} MB · Formatos: JPG, PNG, WebP</p>
-        </div>
-      )}
-
-      {pendingFile && (
-        <CropModal
-          imageFile={pendingFile}
-          onConfirm={handlePhotoConfirm}
-          onCancel={handlePhotoCancel}
-        />
-      )}
-
       {activeTab === 'perfil' && (
         <div className="bg-dark-900/50 border border-dark-800 rounded-xl p-6">
           <div className="flex items-center gap-4 mb-6">
-            <div className="relative group">
-              <div className="w-20 h-20 rounded-full bg-fizzia-500/20 border-2 border-fizzia-500/40 flex items-center justify-center text-fizzia-400 text-2xl font-bold overflow-hidden">
-                {displayAvatar ? (
-                  <img key={displayAvatar} src={displayAvatar} alt="" className="w-full h-full object-cover" />
-                ) : initials}
+            <button
+              type="button"
+              onClick={() => { setShowAvatarPicker(true); setPreviewAvatarId(selectedAvatarId) }}
+              className="cursor-pointer w-20 h-20 rounded-full bg-white border-2 border-fizzia-500/40 flex items-center justify-center overflow-hidden hover:border-fizzia-500 transition-colors group relative"
+            >
+              <AvatarIcon id={selectedAvatarId} size={80} />
+              <div className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <span className="material-symbols-rounded text-white text-xl">edit</span>
               </div>
-              <input
-                type="file"
-                ref={photoInputRef}
-                onChange={handlePhotoSelect}
-                className="hidden"
-                accept="image/*"
-              />
-              <div className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => photoInputRef.current?.click()}
-                  disabled={uploadingPhoto || !!pendingFile}
-                  className="cursor-pointer p-1.5 rounded-full text-white hover:text-fizzia-400 transition-colors disabled:opacity-50"
-                  title="Cambiar foto"
-                >
-                  <span className="material-symbols-rounded text-base">photo_camera</span>
-                </button>
-                {displayAvatar && (
-                  <button
-                    type="button"
-                    onClick={removePhoto}
-                    disabled={uploadingPhoto}
-                    className="cursor-pointer p-1.5 rounded-full text-white hover:text-red-400 transition-colors disabled:opacity-50"
-                    title="Eliminar foto"
-                  >
-                    <span className="material-symbols-rounded text-base">delete</span>
-                  </button>
-                )}
-              </div>
-              {uploadingPhoto && (
-                <div className="absolute inset-0 rounded-full bg-black/60 flex items-center justify-center">
-                  <svg className="animate-spin h-6 w-6 text-fizzia-400" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                </div>
-              )}
-            </div>
+            </button>
             <div>
               <h3 className="text-white font-semibold">{displayName}</h3>
               <p className="text-dark-400 text-sm">{session?.user?.email}</p>
               <button
                 type="button"
-                onClick={() => photoInputRef.current?.click()}
-                disabled={uploadingPhoto || !!pendingFile}
-                className="text-fizzia-400 text-xs font-medium mt-1 hover:text-fizzia-300 transition-colors disabled:opacity-50"
+                onClick={() => { setShowAvatarPicker(true); setPreviewAvatarId(selectedAvatarId) }}
+                className="text-fizzia-400 text-xs font-medium mt-1 hover:text-fizzia-300 transition-colors"
               >
-                Cambiar foto de perfil
+                Cambiar avatar
               </button>
             </div>
           </div>
@@ -437,6 +344,62 @@ export function SettingsPage() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Avatar picker modal */}
+      {showAvatarPicker && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => { setShowAvatarPicker(false); setPreviewAvatarId(null) }}>
+          <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-dark-700">
+              <h3 className="text-lg font-bold text-white">Elige tu avatar</h3>
+              <button onClick={() => { setShowAvatarPicker(false); setPreviewAvatarId(null) }} className="cursor-pointer text-dark-400 hover:text-white transition-colors">
+                <span className="material-symbols-rounded">close</span>
+              </button>
+            </div>
+
+            {/* Large preview */}
+            <div className="flex flex-col items-center py-8 bg-dark-950/50">
+              <div className="w-32 h-32 rounded-full bg-white flex items-center justify-center overflow-hidden shadow-lg shadow-fizzia-500/10">
+                <AvatarIcon id={previewAvatarId || selectedAvatarId} size={128} />
+              </div>
+              <p className="text-white font-medium mt-4 text-sm">
+                {avatars.find(a => a.id === (previewAvatarId || selectedAvatarId))?.label}
+              </p>
+            </div>
+
+            {/* Avatar grid */}
+            <div className="p-5">
+              <div className="grid grid-cols-4 gap-3">
+                {avatars.map(av => (
+                  <button
+                    key={av.id}
+                    onClick={() => setPreviewAvatarId(av.id)}
+                    className={`cursor-pointer aspect-square rounded-full border-2 transition-all flex items-center justify-center overflow-hidden bg-white ${
+                      previewAvatarId === av.id
+                        ? 'border-fizzia-500 ring-2 ring-fizzia-500/30 scale-105'
+                        : selectedAvatarId === av.id
+                          ? 'border-fizzia-500/60'
+                          : 'border-dark-700 hover:border-dark-600'
+                    }`}
+                    title={av.label}
+                  >
+                    <AvatarIcon id={av.id} size={48} />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Confirm button */}
+            <div className="p-5 border-t border-dark-700">
+              <button
+                onClick={() => handleSelectAvatar(previewAvatarId || selectedAvatarId)}
+                className="cursor-pointer w-full py-3 bg-fizzia-500 text-white font-semibold rounded-xl hover:bg-fizzia-400 transition-all"
+              >
+                Usar este avatar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

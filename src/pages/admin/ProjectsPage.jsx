@@ -83,7 +83,7 @@ export function ProjectsPage() {
                   <td className="p-3 text-white font-medium">{project.name}</td>
                   <td className="p-3 text-dark-300">{project.client_name}</td>
                   <td className="p-3"><StatusBadge status={project.status} /></td>
-                  <td className="p-3 text-right text-white">{formatMoney(project.budget || 0)}</td>
+                  <td className="p-3 text-right text-white">{formatMoney(project.final_price || project.budget || 0)}</td>
                   <td className="p-3 text-right text-dark-300">{project.due_date ? formatDate(project.due_date) : '-'}</td>
                 </tr>
               ))}

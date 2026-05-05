@@ -1,11 +1,5 @@
 import { supabase } from './supabase'
 
-function cacheBust(url) {
-  if (!url) return url
-  const [base] = url.split('?')
-  return `${base}?t=${Date.now()}`
-}
-
 async function getCurrentUserId() {
   const { data } = await supabase.auth.getUser()
   return data?.user?.id
@@ -17,9 +11,6 @@ export async function getProfile(userId) {
     .select('*')
     .eq('id', userId)
     .single()
-  if (data?.avatar_url) {
-    data.avatar_url = cacheBust(data.avatar_url)
-  }
   return data
 }
 
@@ -31,9 +22,6 @@ export async function getMyProfile() {
     .select('*')
     .eq('id', userId)
     .maybeSingle()
-  if (data?.avatar_url) {
-    data.avatar_url = cacheBust(data.avatar_url)
-  }
   return data
 }
 
@@ -115,7 +103,7 @@ export async function updateProfile(payload) {
     .select()
     .maybeSingle()
 
-  return { data: data ? { ...data, avatar_url: data.avatar_url ? cacheBust(data.avatar_url) : null } : null, error }
+  return { data: data ? { ...data } : null, error }
 }
 
 export async function updatePassword(currentPassword, newPassword) {
@@ -244,6 +232,166 @@ export async function fulfillFileRequest(requestId, fileId = null) {
   return { data, error }
 }
 
+export async function getProjectInvoices(projectId) {
+  const { data } = await supabase
+    .from('invoices')
+    .select('*, payments(*)')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function getProjectDirectPayments(projectId) {
+  const { data } = await supabase
+    .from('payments')
+    .select('*')
+    .eq('project_id', projectId)
+    .is('invoice_id', null)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+export async function createClientPayment(payload) {
+  const userId = await getCurrentUserId()
+  if (!userId) return { data: null, error: 'No autenticado' }
+
+  let client_id = payload.client_id
+
+  if (!client_id) {
+    const { data: link } = await supabase
+      .from('client_users')
+      .select('client_id')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    client_id = link?.client_id
+
+    if (!client_id) {
+      const profile = await getProfile(userId)
+      const clientEmail = profile?.email || ''
+      const clientName = profile?.full_name || clientEmail || 'Cliente'
+
+      // Try to find existing client by email first
+      const { data: existingClient } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('email', clientEmail)
+        .maybeSingle()
+
+      let newClient
+      if (existingClient) {
+        console.log('Found existing client by email:', existingClient.id)
+        newClient = { id: existingClient.id }
+      } else {
+        console.log('Creating client record for user:', userId)
+        const { data, error: clientError } = await supabase
+          .from('clients')
+          .insert({
+            name: clientName,
+            email: clientEmail,
+            phone: profile?.phone || '',
+            status: 'active'
+          })
+          .select()
+          .single()
+
+        if (clientError) {
+          console.error('Error creating client:', JSON.stringify(clientError))
+          return { data: null, error: clientError.message }
+        }
+        if (!data) {
+          return { data: null, error: 'No se pudo crear tu perfil de cliente' }
+        }
+        newClient = data
+      }
+
+      console.log('Linking client:', newClient.id, 'to user:', userId)
+      const { error: linkError } = await supabase
+        .from('client_users')
+        .insert({ user_id: userId, client_id: newClient.id })
+
+      if (linkError) {
+        console.error('Error linking client:', JSON.stringify(linkError))
+        return { data: null, error: 'No se pudo vincular tu cuenta: ' + linkError.message }
+      }
+
+      client_id = newClient.id
+      console.log('Client linked successfully. client_id:', client_id)
+    }
+  }
+
+  const insertData = {
+    client_id,
+    project_id: payload.project_id || undefined,
+    amount: payload.amount,
+    currency: payload.currency || 'USD',
+    method: payload.method,
+    reference: payload.reference || undefined,
+    notes: payload.notes || undefined,
+    paid_at: payload.paid_at || new Date().toISOString(),
+    admin_status: payload.admin_status || 'pending',
+    account_holder_name: payload.account_holder_name || undefined,
+    account_cedula: payload.account_cedula || undefined,
+    proof_url: payload.proof_url || undefined,
+  }
+
+  if (payload.invoice_id) {
+    insertData.invoice_id = payload.invoice_id
+  }
+
+  const cleaned = Object.fromEntries(
+    Object.entries(insertData).filter(([, v]) => v !== null && v !== undefined)
+  )
+
+  console.log('Inserting payment:', cleaned)
+
+  const { data, error } = await supabase
+    .from('payments')
+    .insert(cleaned)
+    .select()
+    .maybeSingle()
+
+  if (error) {
+    console.error('Supabase payment insert error:', JSON.stringify(error))
+    return { data: null, error }
+  }
+
+  if (data) {
+    console.log('Payment inserted successfully:', data)
+    return { data, error: null }
+  }
+
+  // INSERT succeeded but SELECT returned null (RLS blocking read).
+  // Return the data we sent so the UI can still show success.
+  console.warn('Payment saved but RLS blocked SELECT return. Using local data.')
+  return {
+    data: {
+      id: null,
+      ...cleaned,
+      created_at: new Date().toISOString(),
+    },
+    error: null,
+  }
+}
+
+export async function uploadPaymentProof(file) {
+  const fileExt = file.name.split('.').pop()
+  const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${fileExt}`
+  const filePath = `payment-proofs/${fileName}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('project-files')
+    .upload(filePath, file, { contentType: file.type, cacheControl: '3600' })
+
+  if (uploadError) return { data: null, error: uploadError }
+
+  const { data: publicUrl } = supabase.storage
+    .from('project-files')
+    .getPublicUrl(filePath)
+
+  return { data: publicUrl.publicUrl, error: null }
+}
+
 export async function uploadProjectFile(projectId, file, uploaderId = null, note = '') {
   const userId = uploaderId || await getCurrentUserId()
   if (!userId) return { data: null, error: 'No autenticado' }
@@ -279,32 +427,4 @@ export async function uploadProjectFile(projectId, file, uploaderId = null, note
     .single()
 
   return { data, error }
-}
-
-export async function uploadProfilePhoto(userId, file) {
-  const filePath = `${userId}.jpg`
-
-  await supabase.storage.from('avatars').remove([filePath])
-
-  const { error: uploadError } = await supabase.storage
-    .from('avatars')
-    .upload(filePath, file, { contentType: file.type, upsert: true })
-
-  if (uploadError) {
-    console.error('Storage upload error:', uploadError)
-    return { url: null, error: uploadError }
-  }
-
-  const { data: publicUrl } = supabase.storage
-    .from('avatars')
-    .getPublicUrl(filePath)
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .update({ avatar_url: publicUrl.publicUrl })
-    .eq('id', userId)
-    .select()
-    .single()
-
-  return { url: data?.avatar_url ? cacheBust(data.avatar_url) : cacheBust(publicUrl.publicUrl), error }
 }
