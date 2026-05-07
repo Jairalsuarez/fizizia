@@ -1,23 +1,37 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { updateProject, getAllProjectFiles, uploadProjectFileAdmin, deleteProjectFile, getProjectInvoicesWithPayments, getProjectPayments, sendAdminMessage, subscribeToAdminMessages, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask, getProjectFileRequests, createProjectFileRequest, deleteProjectFileRequest } from '../../services/adminData'
-import { getProjectMessages } from '../../services/clientData'
+import { deleteProjectFile, getAllProjectFiles, uploadProjectFileAdmin } from '../../api/filesApi'
+import { getProjectMessages } from '../../api/messagesApi'
+import { markAdminProjectMessagesRead, sendAdminMessage, subscribeToAdminMessages } from '../../api/messagesApi'
+import { getProjectInvoicesWithPayments, getProjectPayments } from '../../api/paymentsApi'
+import { createProjectFileRequest, createProjectTask, deleteProjectFileRequest, deleteProjectTask, getProjectFileRequests, getProjectTasks, updateProject, updateProjectTask } from '../../api/projectsApi'
 import { useToast } from '../../components/Toast'
 import { Modal } from '../../components/ui/Modal'
 import { supabase } from '../../services/supabase'
 import { formatDate, formatMoney } from '../../utils/format'
+import { PROJECT_STATUS, adminProjectStatusOptions, getProjectStatusColor, getProjectStatusLabel, isProjectClosed } from '../../domain/projects'
+import { AvatarIcon } from '../../data/avatars.jsx'
+import { fetchGitHubCommits, formatCommitTime, getCommitAuthorName, getCommitDate, parseGitHubUrl } from '../../utils/github'
+import { getMessageAuthor, getMessageAuthorName, getMessageAvatarId } from '../../utils/messageIdentity'
+import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../../utils/messageStatus'
+import { sumApprovedPayments } from '../../utils/paymentStatus'
 
-const statusLabels = {
-  solicitado: 'Solicitado', preparando: 'Preparando', trabajando: 'Trabajando',
-  pausado: 'Pausado', entregado: 'Entregado', cancelado: 'Cancelado',
+let pendingId = Date.now()
+function genId() { return `pending-${pendingId++}` }
+
+function canBeAssignedDeveloper(profile, currentUserId) {
+  const role = String(profile?.role || '').toLowerCase()
+  return profile?.id === currentUserId || ['developer', 'admin'].includes(role)
 }
 
-const statusColors = {
-  solicitado: 'bg-fizzia-500', preparando: 'bg-purple-500', trabajando: 'bg-blue-500',
-  pausado: 'bg-yellow-500', entregado: 'bg-green-500', cancelado: 'bg-red-500',
-}
+async function getAssignableProfiles() {
+  const rpcResult = await supabase.rpc('get_assignable_project_developers')
+  if (!rpcResult.error && Array.isArray(rpcResult.data)) return rpcResult
 
-const statusOptions = ['preparando', 'trabajando', 'pausado', 'entregado']
+  return supabase
+    .from('profiles')
+    .select('id, full_name, first_name, email, avatar_id, role')
+}
 
 export function ProjectDetailPage() {
   const { projectId } = useParams()
@@ -26,14 +40,25 @@ export function ProjectDetailPage() {
 
   const [project, setProject] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('general')
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem('project-tab')
+      if (saved && ['general', 'mensajes', 'archivos'].includes(saved)) return saved
+    } catch {
+      return 'general'
+    }
+    return 'general'
+  })
   const [saving, setSaving] = useState(false)
   const [startDate, setStartDate] = useState('')
   const [dueDate, setDueDate] = useState('')
+  const [clientDeadline, setClientDeadline] = useState('')
   const [repoUrl, setRepoUrl] = useState('')
   const [showEditDates, setShowEditDates] = useState(false)
   const [messages, setMessages] = useState([])
+  const [messageAuthors, setMessageAuthors] = useState({})
   const [newMessage, setNewMessage] = useState('')
+  const [visibleTimeMessageId, setVisibleTimeMessageId] = useState(null)
   const [myId, setMyId] = useState(null)
   const [files, setFiles] = useState([])
   const [uploading, setUploading] = useState(false)
@@ -51,7 +76,6 @@ export function ProjectDetailPage() {
   const [acting, setActing] = useState(false)
   const [statusChangeModal, setStatusChangeModal] = useState(false)
   const [pendingStatus, setPendingStatus] = useState('')
-  const [showBudgetEdit, setShowBudgetEdit] = useState(false)
   const [budgetValue, setBudgetValue] = useState('')
   const [savingBudget, setSavingBudget] = useState(false)
   const [finalPriceValue, setFinalPriceValue] = useState('')
@@ -70,25 +94,22 @@ export function ProjectDetailPage() {
   const [showTaskForm, setShowTaskForm] = useState(false)
   const [savingTask, setSavingTask] = useState(false)
 
+  // Developers
+  const [developers, setDevelopers] = useState([])
+  const [assignedDevelopers, setAssignedDevelopers] = useState([])
+  const [selectedDeveloperId, setSelectedDeveloperId] = useState('')
+  const [showDeveloperPicker, setShowDeveloperPicker] = useState(false)
+  const [assigning, setAssigning] = useState(false)
+  const [commits, setCommits] = useState([])
+  const [commitsLoading, setCommitsLoading] = useState(false)
+
   const messagesEndRef = useRef(null)
   const channelRef = useRef(null)
   const fileInputRef = useRef(null)
 
-  // Restore tab from URL on mount
+  // Persist tab to localStorage
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const savedTab = params.get('tab')
-    if (savedTab && ['general', 'mensajes', 'archivos'].includes(savedTab)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTab(savedTab)
-    }
-  }, [])
-
-  // Persist tab to URL
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    params.set('tab', tab)
-    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`)
+    localStorage.setItem('project-tab', tab)
   }, [tab])
 
   useEffect(() => {
@@ -107,15 +128,18 @@ export function ProjectDetailPage() {
           setFinalPriceValue(String(data.final_price || ''))
           setStartDate(data.start_date ? data.start_date.split('T')[0] : '')
           setDueDate(data.due_date ? data.due_date.split('T')[0] : '')
+          setClientDeadline(data.client_deadline ? data.client_deadline.split('T')[0] : '')
           setRepoUrl(data.repository_url || '')
           setShowEditDates(!data.start_date && !data.due_date && !data.repository_url)
-          const [msgs, f, inv, pay, fileReqs, tasksRes] = await Promise.all([
+          const [msgs, f, inv, pay, fileReqs, tasksRes, devsRes, assignedRes] = await Promise.all([
             getProjectMessages(data.id),
             getAllProjectFiles(data.id),
             getProjectInvoicesWithPayments(data.id),
             getProjectPayments(data.id),
             getProjectFileRequests(data.id),
             getProjectTasks(data.id),
+            getAssignableProfiles(),
+            supabase.from('project_developers').select('developer_id, profiles(id, full_name, email, avatar_id)').eq('project_id', data.id),
           ])
           setMessages(msgs)
           setFiles(f)
@@ -123,6 +147,33 @@ export function ProjectDetailPage() {
           setPayments(pay)
           setFileRequests(fileReqs || [])
           setTasks(tasksRes || [])
+          const allProfiles = devsRes?.data || []
+          const currentUserId = userData?.user?.id
+          const currentAdmin = allProfiles.find(p => p.id === currentUserId) || {
+            id: currentUserId,
+            email: userData?.user?.email,
+            full_name: 'Tu',
+            role: 'admin',
+          }
+          if (currentAdmin) setMessageAuthors(prev => ({ ...prev, [currentAdmin.id]: currentAdmin }))
+          const assignableProfileMap = new Map()
+          allProfiles
+            .filter(profile => canBeAssignedDeveloper(profile, currentUserId))
+            .forEach(profile => {
+              assignableProfileMap.set(profile.id, profile.id === currentUserId ? { ...profile, full_name: profile.full_name || 'Tu' } : profile)
+            })
+          if (currentAdmin?.id) {
+            assignableProfileMap.set(currentAdmin.id, {
+              ...currentAdmin,
+              full_name: currentAdmin.full_name || 'Tu',
+            })
+          }
+          const assignableProfiles = Array.from(assignableProfileMap.values())
+          setDevelopers(assignableProfiles)
+          setAssignedDevelopers((assignedRes?.data || []).map(a => {
+            const enriched = assignableProfiles.find(profile => profile.id === a.developer_id)
+            return enriched || a.profiles
+          }).filter(Boolean))
           setInvoiceForm(prev => ({ ...prev, client_id: data.client_id, invoice_number: `FACT-${Date.now()}` }))
         }
       } catch (err) { console.error('Error loading project:', err) }
@@ -133,19 +184,72 @@ export function ProjectDetailPage() {
 
   useEffect(() => {
     if (project && tab === 'mensajes') {
-      channelRef.current = subscribeToAdminMessages(project.id, (payload) => setMessages(prev => [...prev, payload]))
+      markAdminProjectMessagesRead(project.id).then(readMessages => {
+        if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
+      })
+      channelRef.current = subscribeToAdminMessages(project.id, (payload) => {
+        setMessages(prev => mergeRealtimeMessage(prev, payload))
+        if (payload?.sender_id !== myId) {
+          markAdminProjectMessagesRead(project.id).then(readMessages => {
+            if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
+          })
+        }
+      })
     }
     return () => { if (channelRef.current) channelRef.current.unsubscribe() }
-  }, [project, tab])
+  }, [project, tab, myId])
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => {
+    const ids = [...new Set(messages.map(m => m.sender_id).filter(Boolean))]
+      .filter(id => !messageAuthors[id])
+    if (!ids.length) return
+    let cancelled = false
+    supabase
+      .from('profiles')
+      .select('id, full_name, first_name, email, avatar_id, role')
+      .in('id', ids)
+      .then(({ data }) => {
+        if (cancelled) return
+        setMessageAuthors(prev => ({
+          ...prev,
+          ...Object.fromEntries((data || []).map(profile => [profile.id, profile])),
+        }))
+      })
+    return () => { cancelled = true }
+  }, [messages, messageAuthors])
+
+  useEffect(() => {
+    const repo = project?.repository_url || project?.repo_url || repoUrl
+    if (tab !== 'actividad' || !repo) return
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCommitsLoading(true)
+    fetchGitHubCommits(repo, 15)
+      .then(data => { if (!cancelled) setCommits(data || []) })
+      .finally(() => { if (!cancelled) setCommitsLoading(false) })
+    return () => { cancelled = true }
+  }, [project, repoUrl, tab])
+
+  const scrollMessagesToEnd = (behavior = 'auto') => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' }))
+    })
+  }
+
+  useEffect(() => {
+    if (tab === 'mensajes') scrollMessagesToEnd(messages.length ? 'smooth' : 'auto')
+  }, [messages, tab])
+
+  useEffect(() => {
+    if (tab === 'mensajes') scrollMessagesToEnd('auto')
+  }, [tab])
 
   const saveDates = async () => {
     setSaving(true)
-    await updateProject(project.id, { start_date: startDate || null, due_date: dueDate || null, repository_url: repoUrl || null })
+    await updateProject(project.id, { start_date: startDate || null, due_date: dueDate || null, client_deadline: clientDeadline || null, repository_url: repoUrl || null })
     setSaving(false)
     setShowEditDates(false)
-    toast.success('Datos guardados')
+    toast.success('Fechas guardadas')
   }
 
   const saveBudget = async () => {
@@ -154,7 +258,7 @@ export function ProjectDetailPage() {
     await updateProject(project.id, { budget: Number(budgetValue) })
     setProject(prev => ({ ...prev, budget: Number(budgetValue) }))
     setSavingBudget(false)
-    setShowBudgetEdit(false)
+    setShowPriceEdit(false)
     toast.success('Presupuesto del cliente actualizado')
   }
 
@@ -173,7 +277,24 @@ export function ProjectDetailPage() {
     if (!newMessage.trim() || !project) return
     const content = newMessage.trim()
     setNewMessage('')
-    try { await sendAdminMessage(project.id, content) } catch { toast.error('Error enviando mensaje') }
+    const tempId = genId()
+    const tempMsg = {
+      id: tempId,
+      project_id: project.id,
+      sender_id: myId,
+      content,
+      created_at: new Date().toISOString(),
+      is_admin_sender: true,
+      _status: 'sending',
+    }
+    setMessages(prev => [...prev, tempMsg])
+    try {
+      const msg = await sendAdminMessage(project.id, content)
+      setMessages(prev => markMessageSent(prev, tempId, msg || {}))
+    } catch {
+      setMessages(prev => markMessageFailed(prev, tempId))
+      toast.error('Error enviando mensaje')
+    }
   }
 
   const handleFileUpload = async (e) => {
@@ -210,15 +331,27 @@ export function ProjectDetailPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
-  const handleStatusChange = (newStatus) => { setPendingStatus(newStatus); setStatusChangeModal(true) }
+  const updateProjectStatus = async (status) => {
+    setActing(true)
+    await updateProject(project.id, { status })
+    toast.success(`Estado cambiado a "${getProjectStatusLabel(status)}"`)
+    setProject(prev => ({ ...prev, status }))
+    setActing(false)
+  }
+
+  const requestStatusChange = async (status) => {
+    if (status === project.status || acting) return
+    if (status === PROJECT_STATUS.DELIVERED) {
+      setPendingStatus(status)
+      setStatusChangeModal(true)
+      return
+    }
+    await updateProjectStatus(status)
+  }
 
   const confirmStatusChange = async () => {
-    setActing(true)
-    await updateProject(project.id, { status: pendingStatus })
-    toast.success(`Estado cambiado a "${statusLabels[pendingStatus]}"`)
-    setProject(prev => ({ ...prev, status: pendingStatus }))
+    await updateProjectStatus(pendingStatus)
     setStatusChangeModal(false)
-    setActing(false)
   }
 
   const handleConfirmAction = async () => {
@@ -301,6 +434,36 @@ export function ProjectDetailPage() {
     toast.success('Solicitud eliminada')
   }
 
+  // Developer assignment handlers
+  const assignDeveloper = async () => {
+    if (!selectedDeveloperId) return
+    const alreadyAssigned = assignedDevelopers.some(d => d.id === selectedDeveloperId)
+    if (alreadyAssigned) { toast.error('Ya está asignado'); return }
+    setAssigning(true)
+    const { data, error } = await supabase
+      .from('project_developers')
+      .insert({ project_id: project.id, developer_id: selectedDeveloperId })
+      .select()
+      .single()
+    if (data && !error) {
+      const dev = developers.find(d => d.id === selectedDeveloperId)
+      setAssignedDevelopers(prev => [...prev, dev])
+      setSelectedDeveloperId('')
+      setShowDeveloperPicker(false)
+      toast.success('Developer asignado')
+    } else {
+      toast.error('Error al asignar developer')
+    }
+    setAssigning(false)
+  }
+
+  const removeDeveloper = async (devId) => {
+    await supabase.from('project_developers').delete().eq('project_id', project.id).eq('developer_id', devId)
+    setAssignedDevelopers(prev => prev.filter(d => d.id !== devId))
+    setShowDeveloperPicker(true)
+    toast.success('Developer removido')
+  }
+
   if (loading) return (
     <div className="p-6">
       <div className="h-96 bg-dark-800 rounded-xl animate-pulse" />
@@ -315,21 +478,29 @@ export function ProjectDetailPage() {
     </div>
   )
 
-  const isSolicitado = project.status === 'solicitado'
-  const isClosed = ['entregado', 'cancelado'].includes(project.status)
+  const isSolicitado = project.status === PROJECT_STATUS.REQUESTED
+  const isClosed = isProjectClosed(project.status)
   const doneTasks = tasks.filter(t => t.status === 'done').length
+  const hasFinalPrice = project.final_price && Number(project.final_price) > 0
+  const invoicedTotal = invoices.reduce((s, i) => s + Number(i.total || 0), 0)
+  const approvedPaid = sumApprovedPayments(payments)
+  const pendingPaymentTotal = Math.max(invoicedTotal - approvedPaid, 0)
 
   const tabs = [
-    { id: 'general', label: 'General', icon: 'description' },
+    { id: 'general', label: 'General', icon: 'dashboard' },
     { id: 'mensajes', label: 'Mensajes', icon: 'chat' },
     { id: 'archivos', label: 'Archivos', icon: 'folder' },
+    { id: 'actividad', label: 'Actividad', icon: 'commit' },
   ]
 
+  const daysUntilDue = dueDate ? Math.ceil((new Date(dueDate) - new Date()) / (1000 * 60 * 60 * 24)) : null
+  const daysUntilClientDeadline = clientDeadline ? Math.ceil((new Date(clientDeadline) - new Date()) / (1000 * 60 * 60 * 24)) : null
+
   return (
-    <div className="min-h-screen bg-dark-950">
+    <div className="min-h-[calc(100vh-4rem)] flex flex-col">
       {/* Header */}
-      <div className="border-b border-dark-800 bg-dark-900/80 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-6 py-4">
+      <div className="border-b border-dark-800/70 bg-dark-950/45 backdrop-blur-sm shrink-0">
+        <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4 min-w-0">
               <button onClick={() => navigate('/admin')} className="cursor-pointer p-2 text-dark-400 hover:text-white transition-colors shrink-0">
@@ -338,14 +509,64 @@ export function ProjectDetailPage() {
               <div className="min-w-0">
                 <h1 className="text-xl font-bold text-white truncate">{project.name}</h1>
                 <div className="flex items-center gap-3 mt-1">
-                  <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium text-white ${statusColors[project.status]}`}>
-                    {statusLabels[project.status] || project.status}
-                  </span>
                   <span className="text-sm text-dark-400">{project.clients?.name || ''}</span>
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0 ml-4">
+            <div className="flex items-center gap-6 shrink-0 ml-4">
+              {/* Price in header */}
+              <div className="group/price text-right min-w-[9rem]">
+                {showPriceEdit ? (
+                  <div className="flex items-center justify-end gap-1.5 rounded-xl border border-dark-800 bg-dark-950/80 px-2 py-1.5 shadow-lg shadow-black/10">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={hasFinalPrice ? finalPriceValue : budgetValue}
+                      onChange={(e) => hasFinalPrice ? setFinalPriceValue(e.target.value) : setBudgetValue(e.target.value)}
+                      className="h-8 w-24 rounded-lg border border-dark-700 bg-black/60 px-2.5 text-right text-sm font-semibold text-white outline-none transition-colors focus:border-fizzia-500"
+                      autoFocus
+                    />
+                    <button
+                      onClick={hasFinalPrice ? savePrice : saveBudget}
+                      disabled={hasFinalPrice ? savingPrice : savingBudget}
+                      className="cursor-pointer flex h-8 w-8 items-center justify-center rounded-lg bg-fizzia-500 text-white hover:bg-fizzia-400 disabled:opacity-50 transition-all"
+                      title="Guardar precio"
+                    >
+                      <span className="material-symbols-rounded text-[18px]">check</span>
+                    </button>
+                    <button
+                      onClick={() => setShowPriceEdit(false)}
+                      className="cursor-pointer flex h-8 w-8 items-center justify-center rounded-lg bg-dark-800 text-dark-300 hover:text-white transition-all"
+                      title="Cancelar"
+                    >
+                      <span className="material-symbols-rounded text-[18px]">close</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-end gap-1.5 rounded-xl px-2 py-1 transition-colors hover:bg-dark-900/70">
+                    <button
+                      onClick={() => setShowPriceEdit(true)}
+                      className="cursor-pointer text-right"
+                      title="Editar precio"
+                    >
+                      <p className="text-[10px] text-dark-500 uppercase tracking-wider font-medium">
+                        {hasFinalPrice ? 'Precio final' : 'Presupuesto'}
+                      </p>
+                      <p className={`text-lg font-bold leading-5 ${hasFinalPrice ? 'text-green-400' : 'text-white'}`}>
+                        {hasFinalPrice ? formatMoney(project.final_price) : formatMoney(project.budget || 0)}
+                      </p>
+                    </button>
+                    <button
+                      onClick={() => setShowPriceEdit(true)}
+                      className="cursor-pointer flex h-6 w-6 items-center justify-center rounded-md text-dark-500 opacity-0 transition-all hover:bg-dark-800 hover:text-white group-hover/price:opacity-100"
+                      title="Editar precio"
+                    >
+                      <span className="material-symbols-rounded text-[15px]">edit</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              {/* Action buttons */}
               {isSolicitado && (
                 <>
                   <button onClick={() => setActionModal('accept')} className="cursor-pointer px-4 py-2 bg-fizzia-500/20 border border-fizzia-500/30 text-fizzia-400 text-sm font-medium rounded-lg hover:bg-fizzia-500/30 transition-all">Aceptar</button>
@@ -361,194 +582,259 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-dark-800 bg-dark-900/50">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="flex items-center justify-between">
-            <div className="flex gap-1">
-              {tabs.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`cursor-pointer flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all ${
-                    tab === t.id
-                      ? 'border-fizzia-500 text-white'
-                      : 'border-transparent text-dark-400 hover:text-white hover:border-dark-600'
-                  }`}
-                >
-                  <span className="material-symbols-rounded text-lg">{t.icon}</span>
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-4 text-sm">
-              <span className="text-dark-400">{project.currency || 'USD'}</span>
-              <span className="text-white font-semibold">{project.final_price ? formatMoney(project.final_price) : formatMoney(project.budget || 0)}</span>
-            </div>
+      <div className="border-b border-dark-800/70 bg-dark-950/25 shrink-0">
+        <div className="px-6">
+          <div className="flex gap-1">
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`cursor-pointer flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all ${
+                  tab === t.id
+                    ? 'border-fizzia-500 text-white'
+                    : 'border-transparent text-dark-400 hover:text-white hover:border-dark-600'
+                }`}
+              >
+                <span className="material-symbols-rounded text-lg">{t.icon}</span>
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Content */}
-      <div className="max-w-6xl mx-auto px-6 py-6">
+      <div className="flex-1 px-6 py-6 overflow-auto">
         {/* General tab */}
         {tab === 'general' && (
           <div className="space-y-6">
-            {/* Status change */}
+            {/* Status change - visual chips */}
             {!isSolicitado && !isClosed && (
-              <div className="bg-dark-900 border border-dark-800 rounded-xl p-5">
-                <h3 className="text-sm font-semibold text-dark-400 mb-3">Cambiar estado</h3>
-                <div className="flex items-center gap-4">
-                  <select
-                    value={project.status}
-                    onChange={(e) => handleStatusChange(e.target.value)}
-                    className="px-4 py-2.5 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500"
-                  >
-                    {statusOptions.map(s => <option key={s} value={s}>{statusLabels[s]}</option>)}
-                  </select>
-                  <span className="text-dark-500 text-sm">Selecciona el nuevo estado</span>
+              <div className="bg-dark-900/80 border border-dark-800 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-dark-400">Estado del proyecto</h3>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {adminProjectStatusOptions.map(s => {
+                    const isActive = project.status === s
+                    return (
+                      <button
+                        key={s}
+                        onClick={() => requestStatusChange(s)}
+                        className={`cursor-pointer flex items-center gap-2 px-4 py-3 rounded-xl border text-sm font-medium transition-all ${
+                          isActive
+                            ? `${getProjectStatusColor(s)} text-white border-transparent shadow-lg`
+                            : 'bg-dark-950 border-dark-700 text-dark-300 hover:text-white hover:border-dark-500'
+                        }`}
+                      >
+                        <span className="material-symbols-rounded text-lg">
+                          {s === 'preparando' ? 'construction' : s === 'trabajando' ? 'build' : s === 'pausado' ? 'pause_circle' : 'check_circle'}
+                        </span>
+                        {getProjectStatusLabel(s)}
+                        {isActive && <span className="material-symbols-rounded text-sm ml-auto">check</span>}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             )}
 
-            {/* Budget & Dates */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Client Budget */}
-              <div className="bg-dark-900 border border-dark-800 rounded-xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-dark-400">Presupuesto del cliente</h3>
-                  <button onClick={() => setShowBudgetEdit(!showBudgetEdit)} className="cursor-pointer text-xs text-fizzia-400 hover:text-fizzia-300 transition-colors flex items-center gap-1">
-                    <span className="material-symbols-rounded text-sm">{showBudgetEdit ? 'close' : 'edit'}</span>
-                    {showBudgetEdit ? 'Cancelar' : 'Editar'}
-                  </button>
-                </div>
-                {showBudgetEdit ? (
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      value={budgetValue}
-                      onChange={(e) => setBudgetValue(e.target.value)}
-                      className="flex-1 px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500"
-                      placeholder="0.00"
-                      step="0.01"
-                    />
-                    <button
-                      onClick={saveBudget}
-                      disabled={savingBudget}
-                      className="cursor-pointer px-4 py-2 bg-dark-700 text-white text-sm font-medium rounded-lg hover:bg-dark-600 disabled:opacity-50 transition-all"
-                    >
-                      {savingBudget ? '...' : 'Guardar'}
-                    </button>
-                  </div>
-                ) : (
-                  <p className="text-2xl font-bold text-white">{project.final_price ? '—' : formatMoney(project.budget || 0)}</p>
-                )}
-                {project.final_price && (
-                  <p className="text-xs text-dark-500 mt-2">Reemplazado por el precio final</p>
-                )}
+            {/* Dates - prominent */}
+            <div className="bg-dark-900/80 border border-dark-800 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <span className="material-symbols-rounded text-fizzia-400">event_note</span>
+                  Fechas del proyecto
+                </h3>
+                <button onClick={() => setShowEditDates(!showEditDates)} className="cursor-pointer text-xs text-fizzia-400 hover:text-fizzia-300 transition-colors flex items-center gap-1">
+                  <span className="material-symbols-rounded text-sm">{showEditDates ? 'close' : 'edit'}</span>
+                  {showEditDates ? 'Cancelar' : 'Editar'}
+                </button>
               </div>
-
-              {/* Final Price */}
-              <div className="bg-dark-900 border border-dark-800 rounded-xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-dark-400">Precio del proyecto</h3>
-                  <button onClick={() => setShowPriceEdit(!showPriceEdit)} className="cursor-pointer text-xs text-fizzia-400 hover:text-fizzia-300 transition-colors flex items-center gap-1">
-                    <span className="material-symbols-rounded text-sm">{showPriceEdit ? 'close' : 'edit'}</span>
-                    {showPriceEdit ? 'Cancelar' : project.final_price ? 'Editar' : 'Definir'}
-                  </button>
-                </div>
-                {showPriceEdit ? (
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      value={finalPriceValue}
-                      onChange={(e) => setFinalPriceValue(e.target.value)}
-                      className="flex-1 px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500"
-                      placeholder="0.00"
-                      step="0.01"
-                    />
-                    <button
-                      onClick={savePrice}
-                      disabled={savingPrice}
-                      className="cursor-pointer px-4 py-2 bg-fizzia-500 text-white text-sm font-medium rounded-lg hover:bg-fizzia-400 disabled:opacity-50 transition-all"
-                    >
-                      {savingPrice ? '...' : 'Guardar'}
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    {project.final_price ? (
-                      <p className="text-2xl font-bold text-green-400">{formatMoney(project.final_price)}</p>
-                    ) : (
-                      <p className="text-lg text-dark-500">Sin definir</p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Dates */}
-              <div className="bg-dark-900 border border-dark-800 rounded-xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-dark-400">Fechas</h3>
-                  <button onClick={() => setShowEditDates(!showEditDates)} className="cursor-pointer text-xs text-fizzia-400 hover:text-fizzia-300 transition-colors flex items-center gap-1">
-                    <span className="material-symbols-rounded text-sm">{showEditDates ? 'close' : 'edit'}</span>
-                    {showEditDates ? 'Cancelar' : 'Editar'}
-                  </button>
-                </div>
-                {showEditDates ? (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs text-dark-500 mb-1 block">Fecha inicio</label>
-                        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-dark-500 mb-1 block">Fecha entrega</label>
-                        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500" />
-                      </div>
+              {showEditDates ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-xs text-dark-500 mb-1 block">Fecha inicio</label>
+                      <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500" />
                     </div>
                     <div>
-                      <label className="text-xs text-dark-500 mb-1 block">URL repositorio</label>
-                      <input type="url" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="https://github.com/..." className="w-full px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500 placeholder-dark-600" />
+                      <label className="text-xs text-dark-500 mb-1 block">Fecha entrega</label>
+                      <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500" />
                     </div>
-                    <button onClick={saveDates} disabled={saving} className="cursor-pointer px-4 py-2 bg-fizzia-500 text-white text-sm font-medium rounded-lg hover:bg-fizzia-400 disabled:opacity-50 transition-all">
-                      {saving ? 'Guardando...' : 'Guardar'}
+                    <div>
+                      <label className="text-xs text-dark-500 mb-1 block">Fecha límite (cliente)</label>
+                      <input type="date" value={clientDeadline} onChange={(e) => setClientDeadline(e.target.value)} className="w-full px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-dark-500 mb-1 block">URL repositorio</label>
+                    <input type="url" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="https://github.com/..." className="w-full px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500 placeholder-dark-600" />
+                  </div>
+                  <button onClick={saveDates} disabled={saving} className="cursor-pointer px-4 py-2 bg-fizzia-500 text-white text-sm font-medium rounded-lg hover:bg-fizzia-400 disabled:opacity-50 transition-all">
+                    {saving ? 'Guardando...' : 'Guardar'}
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Start date */}
+                  <div className={`flex items-center gap-2.5 p-3 rounded-lg border ${
+                    startDate ? 'bg-dark-950 border-dark-700' : 'bg-dark-950/50 border-dark-800 border-dashed'
+                  }`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      startDate ? 'bg-fizzia-500/20' : 'bg-dark-800'
+                    }`}>
+                      <span className={`material-symbols-rounded text-base ${startDate ? 'text-fizzia-400' : 'text-dark-600'}`}>calendar_today</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-dark-500 uppercase tracking-wider font-medium">Inicio</p>
+                      <p className={`text-xs font-semibold ${startDate ? 'text-white' : 'text-dark-600'}`}>
+                        {startDate ? formatDate(startDate) : 'Sin definir'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Due date */}
+                  <div className={`flex items-center gap-2.5 p-3 rounded-lg border ${
+                    dueDate ? 'bg-dark-950 border-dark-700' : 'bg-dark-950/50 border-dark-800 border-dashed'
+                  }`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      dueDate
+                        ? daysUntilDue !== null && daysUntilDue <= 3 ? 'bg-red-500/20' : 'bg-blue-500/20'
+                        : 'bg-dark-800'
+                    }`}>
+                      <span className={`material-symbols-rounded text-base ${
+                        dueDate
+                          ? daysUntilDue !== null && daysUntilDue <= 3 ? 'text-red-400' : 'text-blue-400'
+                          : 'text-dark-600'
+                      }`}>event_available</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-dark-500 uppercase tracking-wider font-medium">Entrega</p>
+                      <p className={`text-xs font-semibold ${dueDate ? 'text-white' : 'text-dark-600'}`}>
+                        {dueDate ? formatDate(dueDate) : 'Sin definir'}
+                      </p>
+                      {dueDate && daysUntilDue !== null && (
+                        <p className={`text-[10px] mt-0.5 ${
+                          daysUntilDue <= 0 ? 'text-red-400' : daysUntilDue <= 3 ? 'text-amber-400' : 'text-dark-500'
+                        }`}>
+                          {daysUntilDue <= 0 ? 'Vencida' : daysUntilDue === 1 ? '1 día restante' : `${daysUntilDue} días restantes`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Client deadline */}
+                  <div className={`flex items-center gap-2.5 p-3 rounded-lg border ${
+                    clientDeadline ? 'bg-dark-950 border-dark-700' : 'bg-dark-950/50 border-dark-800 border-dashed'
+                  }`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      clientDeadline
+                        ? daysUntilClientDeadline !== null && daysUntilClientDeadline <= 3 ? 'bg-amber-500/20' : 'bg-purple-500/20'
+                        : 'bg-dark-800'
+                    }`}>
+                      <span className={`material-symbols-rounded text-base ${
+                        clientDeadline
+                          ? daysUntilClientDeadline !== null && daysUntilClientDeadline <= 3 ? 'text-amber-400' : 'text-purple-400'
+                          : 'text-dark-600'
+                      }`}>hourglass_top</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-dark-500 uppercase tracking-wider font-medium">Límite cliente</p>
+                      <p className={`text-xs font-semibold ${clientDeadline ? 'text-white' : 'text-dark-600'}`}>
+                        {clientDeadline ? formatDate(clientDeadline) : 'Sin definir'}
+                      </p>
+                      {clientDeadline && daysUntilClientDeadline !== null && (
+                        <p className={`text-[10px] mt-0.5 ${
+                          daysUntilClientDeadline <= 0 ? 'text-red-400' : daysUntilClientDeadline <= 3 ? 'text-amber-400' : 'text-dark-500'
+                        }`}>
+                          {daysUntilClientDeadline <= 0 ? 'Vencida' : daysUntilClientDeadline === 1 ? '1 día restante' : `${daysUntilClientDeadline} días restantes`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {repoUrl && (
+                <a href={repoUrl} target="_blank" rel="noopener noreferrer" className="cursor-pointer flex items-center gap-2 mt-4 text-sm text-fizzia-400 hover:text-fizzia-300 transition-colors">
+                  <span className="material-symbols-rounded text-sm">code</span>
+                  Repositorio
+                </a>
+              )}
+            </div>
+
+            {/* Developers assignment */}
+            <div className="bg-dark-900/80 border border-dark-800 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-dark-400 flex items-center gap-2">
+                  <span className="material-symbols-rounded text-fizzia-400">person_add</span>
+                  Developers asignados
+                </h3>
+                {assignedDevelopers.length > 0 && !showDeveloperPicker && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeveloperPicker(true)}
+                    className="cursor-pointer flex items-center gap-1 text-xs font-medium text-fizzia-400 transition-colors hover:text-fizzia-300"
+                  >
+                    <span className="material-symbols-rounded text-sm">edit</span>
+                    Editar
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                {assignedDevelopers.length > 0 && (
+                  <div className="space-y-2">
+                    {assignedDevelopers.map(dev => (
+                      <div key={dev.id} className="flex items-center justify-between p-3 bg-dark-950 rounded-lg border border-dark-800">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-white rounded-full overflow-hidden shrink-0">
+                            <AvatarIcon id={dev.avatar_id || (dev.id === myId ? '1' : '16')} size={32} />
+                          </div>
+                          <div>
+                            <p className="text-white text-sm font-medium">{dev.id === myId ? 'Tu' : (dev.full_name || 'Sin nombre')}</p>
+                            <p className="text-xs text-dark-500">{dev.email || ''}</p>
+                          </div>
+                        </div>
+                        <button onClick={() => removeDeveloper(dev.id)} className="cursor-pointer p-1.5 text-dark-500 hover:text-red-400 transition-colors">
+                          <span className="material-symbols-rounded text-sm">remove_circle</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {(assignedDevelopers.length === 0 || showDeveloperPicker) && (
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedDeveloperId}
+                      onChange={(e) => setSelectedDeveloperId(e.target.value)}
+                      className="cursor-pointer flex-1 px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-fizzia-500"
+                    >
+                      <option value="">Seleccionar developer...</option>
+                      {developers
+                        .filter(d => !assignedDevelopers.some(ad => ad.id === d.id))
+                        .map(d => (
+                          <option key={d.id} value={d.id}>
+                            {d.id === myId ? 'Tu (admin)' : (d.full_name || d.first_name || 'Developer')}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      onClick={assignDeveloper}
+                      disabled={assigning || !selectedDeveloperId}
+                      className="cursor-pointer px-4 py-2 bg-fizzia-500 text-white text-sm font-medium rounded-lg hover:bg-fizzia-400 disabled:opacity-50 transition-all"
+                    >
+                      {assigning ? 'Asignando...' : 'Asignar'}
                     </button>
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    {startDate && (
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-rounded text-dark-500 text-sm">calendar_today</span>
-                        <span className="text-sm text-white">Inicio: {formatDate(startDate)}</span>
-                      </div>
-                    )}
-                    {dueDate && (
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-rounded text-dark-500 text-sm">event_available</span>
-                        <span className="text-sm text-white">Entrega: {formatDate(dueDate)}</span>
-                      </div>
-                    )}
-                    {repoUrl && (
-                      <a href={repoUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-fizzia-400 hover:text-fizzia-300 transition-colors">
-                        <span className="material-symbols-rounded text-sm">code</span>
-                        Repositorio
-                      </a>
-                    )}
-                    {!startDate && !dueDate && !repoUrl && (
-                      <p className="text-sm text-dark-500">Sin fechas configuradas</p>
-                    )}
-                  </div>
+                )}
+
+                {developers.length === 0 && (
+                  <p className="text-xs text-dark-500 text-center py-2">No hay developers registrados</p>
                 )}
               </div>
             </div>
-
-            {/* Description */}
-            {project.description && (
-              <div className="bg-dark-900 border border-dark-800 rounded-xl p-5">
-                <h3 className="text-sm font-semibold text-dark-400 mb-3">Descripción</h3>
-                <p className="text-dark-300 text-sm whitespace-pre-wrap">{project.description}</p>
-              </div>
-            )}
 
             {/* Invoices summary */}
             {invoices.length > 0 && (
@@ -560,15 +846,15 @@ export function ProjectDetailPage() {
                 <div className="grid grid-cols-3 gap-4 mb-4">
                   <div className="text-center p-3 bg-dark-950 rounded-lg">
                     <p className="text-xs text-dark-500 mb-1">Facturado</p>
-                    <p className="text-lg font-bold text-white">{formatMoney(invoices.reduce((s, i) => s + Number(i.total || 0), 0))}</p>
+                    <p className="text-lg font-bold text-white">{formatMoney(invoicedTotal)}</p>
                   </div>
                   <div className="text-center p-3 bg-dark-950 rounded-lg">
                     <p className="text-xs text-dark-500 mb-1">Pagado</p>
-                    <p className="text-lg font-bold text-green-400">{formatMoney(payments.reduce((s, p) => s + Number(p.amount || 0), 0))}</p>
+                    <p className="text-lg font-bold text-green-400">{formatMoney(approvedPaid)}</p>
                   </div>
                   <div className="text-center p-3 bg-dark-950 rounded-lg">
                     <p className="text-xs text-dark-500 mb-1">Pendiente</p>
-                    <p className="text-lg font-bold text-amber-400">{formatMoney(invoices.reduce((s, i) => s + Number(i.total || 0), 0) - payments.reduce((s, p) => s + Number(p.amount || 0), 0))}</p>
+                    <p className="text-lg font-bold text-amber-400">{formatMoney(pendingPaymentTotal)}</p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -601,21 +887,64 @@ export function ProjectDetailPage() {
 
         {/* Messages tab */}
         {tab === 'mensajes' && (
-          <div className="bg-dark-900 border border-dark-800 rounded-xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 16rem)' }}>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 14rem)' }}>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 rounded-xl bg-dark-900/50 border border-dark-800">
               {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full"><p className="text-dark-500 text-sm">No hay mensajes aún</p></div>
               ) : (
                 messages.map((msg) => {
                   const isAdmin = msg.sender_id === myId || msg.is_admin_sender
+                  const status = getDeliveryStatus(msg, isAdmin)
+                  const author = getMessageAuthor(msg, messageAuthors)
+                  const authorName = getMessageAuthorName({ message: msg, isMine: isAdmin, author, clientName: project.clients?.name || 'Cliente' })
+                  const avatarId = getMessageAvatarId({ message: msg, isMine: isAdmin, author, currentUser: messageAuthors[myId] })
+                  const time = new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+                  const showTime = visibleTimeMessageId === msg.id
                   return (
-                    <div key={msg.id} className={`flex ${isAdmin ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[70%] px-4 py-3 rounded-xl text-sm ${isAdmin ? 'bg-fizzia-500/20 text-fizzia-300 rounded-br-sm' : 'bg-dark-800 text-dark-200 rounded-bl-sm'}`}>
-                        <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                        <p className={`text-[10px] mt-1 ${isAdmin ? 'text-fizzia-500/50' : 'text-dark-500'}`}>
-                          {new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}
-                        </p>
+                    <div key={msg.id} className={`flex items-end gap-2 ${isAdmin ? 'justify-end' : 'justify-start'}`}>
+                      {!isAdmin && (
+                        <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
+                          <AvatarIcon id={avatarId} size={32} />
+                        </div>
+                      )}
+                      <div className={`max-w-[70%] ${isAdmin ? 'items-end' : 'items-start'} flex flex-col`}>
+                        <div className={`mb-1 flex items-center gap-2 text-[11px] ${isAdmin ? 'justify-end text-fizzia-400' : 'text-dark-400'}`}>
+                          <span className="font-medium">{authorName}</span>
+                        </div>
+                        <div className={`flex items-end gap-1.5 ${isAdmin ? 'flex-row-reverse' : ''}`}>
+                          <button
+                            type="button"
+                            onClick={() => setVisibleTimeMessageId(prev => prev === msg.id ? null : msg.id)}
+                            className={`cursor-pointer px-4 py-3 rounded-2xl text-sm text-left shadow-sm ${
+                              isAdmin
+                                ? status === 'error' ? 'bg-red-500/80 text-white rounded-br-sm'
+                                : 'bg-fizzia-500 text-white rounded-br-sm'
+                                : 'bg-dark-800 text-dark-100 rounded-bl-sm'
+                            }`}
+                          >
+                            <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                          </button>
+                          {isAdmin && (
+                            <span className={`mb-1 flex h-4 w-4 items-center justify-center ${status === 'error' ? 'text-red-400' : 'text-dark-500'}`}>
+                              {status === 'sending' && (
+                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                              )}
+                              {status === 'sent' && <span className="material-symbols-rounded text-[13px]">check</span>}
+                              {status === 'read' && <span className="material-symbols-rounded text-[13px] text-sky-400">done_all</span>}
+                              {status === 'error' && <span className="material-symbols-rounded text-[13px]">error</span>}
+                            </span>
+                          )}
+                        </div>
+                        {showTime && <span className="mt-1 text-[10px] text-dark-500">{time}</span>}
                       </div>
+                      {isAdmin && (
+                        <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
+                          <AvatarIcon id={avatarId} size={32} />
+                        </div>
+                      )}
                     </div>
                   )
                 })
@@ -631,11 +960,75 @@ export function ProjectDetailPage() {
           </div>
         )}
 
+        {tab === 'actividad' && (
+          <div className="bg-dark-900/70 border border-dark-800 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-white font-semibold">Actividad de GitHub</h3>
+                <p className="text-dark-500 text-xs mt-1">
+                  {parseGitHubUrl(project.repository_url || project.repo_url || repoUrl)
+                    ? 'Commits recientes del repositorio configurado'
+                    : 'Configura un repositorio de GitHub para ver cambios'}
+                </p>
+              </div>
+              {(project.repository_url || project.repo_url || repoUrl) && (
+                <a
+                  href={project.repository_url || project.repo_url || repoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="cursor-pointer text-fizzia-400 hover:text-fizzia-300 text-sm font-medium"
+                >
+                  Abrir repo
+                </a>
+              )}
+            </div>
+            {commitsLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={index} className="h-16 rounded-xl bg-dark-800 animate-pulse" />
+                ))}
+              </div>
+            ) : commits.length ? (
+              <div className="space-y-3">
+                {commits.map(commit => (
+                  <a
+                    key={commit.sha}
+                    href={commit.html_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="cursor-pointer flex items-start gap-3 rounded-xl border border-dark-800 bg-dark-950/70 p-4 transition-all hover:border-fizzia-500/40 hover:bg-dark-950"
+                  >
+                    <div className="mt-0.5 h-9 w-9 rounded-full overflow-hidden border border-dark-700 bg-dark-800 shrink-0">
+                      {commit.author?.avatar_url ? (
+                        <img src={commit.author.avatar_url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="material-symbols-rounded flex h-full w-full items-center justify-center text-base text-fizzia-400">terminal</span>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-white text-sm font-medium truncate">{commit.commit?.message?.split('\n')[0]}</p>
+                      <p className="text-dark-500 text-xs mt-1">
+                        {getCommitAuthorName(commit)} · {formatCommitTime(getCommitDate(commit))}
+                      </p>
+                    </div>
+                    <code className="rounded-md bg-dark-900 px-2 py-1 text-xs text-dark-400">{commit.sha?.slice(0, 7)}</code>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <span className="material-symbols-rounded text-dark-600 text-4xl">commit</span>
+                <p className="text-dark-400 text-sm mt-2">No hay commits disponibles</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Files tab */}
         {tab === 'archivos' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Checklist - 2 columns */}
-            <div className="lg:col-span-2 bg-dark-900 border border-dark-800 rounded-xl p-5">
+            <div className="lg:col-span-2">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-semibold text-white">Lista de archivos pendientes</h3>
@@ -752,7 +1145,7 @@ export function ProjectDetailPage() {
             </div>
 
             {/* Uploaded files - 1 column */}
-            <div className="bg-dark-900 border border-dark-800 rounded-xl p-5">
+            <div className="">
               <h3 className="text-sm font-semibold text-white mb-3">Archivos subidos</h3>
               <div className="mb-3">
                 <input type="file" ref={fileInputRef} multiple onChange={handleFileUpload} className="hidden" accept="image/*,.pdf,.doc,.docx,.zip,.rar,.psd,.ai,.fig,.sketch,.mp4,.mov,.svg" />
@@ -787,7 +1180,7 @@ export function ProjectDetailPage() {
 
       {/* Modals */}
       <Modal isOpen={statusChangeModal} onClose={() => setStatusChangeModal(false)} title="Cambiar estado" size="sm">
-        <p className="text-dark-300 text-sm mb-4">¿Cambiar estado de <span className="text-white font-medium">{project.name}</span> a <span className="text-fizzia-400 font-medium">{statusLabels[pendingStatus]}</span>?</p>
+        <p className="text-dark-300 text-sm mb-4">¿Cambiar estado de <span className="text-white font-medium">{project.name}</span> a <span className="text-fizzia-400 font-medium">{getProjectStatusLabel(pendingStatus)}</span>?</p>
         <div className="flex gap-2">
           <button onClick={() => setStatusChangeModal(false)} className="cursor-pointer flex-1 px-4 py-2.5 bg-dark-800 border border-dark-700 text-dark-300 text-sm font-medium rounded-lg hover:text-white transition-all">Cancelar</button>
           <button onClick={confirmStatusChange} disabled={acting} className="cursor-pointer flex-1 px-4 py-2.5 bg-fizzia-500 text-white text-sm font-medium rounded-lg hover:bg-fizzia-400 disabled:opacity-50 transition-all">{acting ? 'Procesando...' : 'Confirmar'}</button>

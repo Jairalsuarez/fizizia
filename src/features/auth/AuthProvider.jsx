@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { AuthContext } from './authContext'
-import { getSession, onAuthChange, signOut as signOutAdmin } from '../../services/adminData'
-import { getProfile } from '../../services/clientData'
+import { getSession, onAuthChange, signOut as signOutSession } from '../../api/authApi'
+import { getProfile } from '../../api/profilesApi'
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
@@ -83,7 +83,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const signOut = useCallback(async () => {
-    await signOutAdmin()
+    await signOutSession()
     setSession(null)
     setUser(null)
     userRef.current = null

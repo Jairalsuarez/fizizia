@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Button, Modal } from '../../components/ui/'
 import { EmptyState } from '../../components/ui/EmptyState'
-import { deleteClient } from '../../services/adminData'
+import { deleteClient } from '../../api/clientsApi'
 import ClientList from '../../features/clients/ClientList'
 import ClientDetail from '../../features/clients/ClientDetail'
 import ClientForm from '../../features/clients/ClientForm'

@@ -1,7 +1,8 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect } from 'react'
 import { Input, Button } from '../../components/ui/'
-import { createInvoice, createPayment, getAllClients } from '../../services/adminData'
+import { getAllClients, getAllClientProjects } from '../../api/clientsApi'
+import { createInvoice, createPayment } from '../../api/paymentsApi'
 
 export default function ChargeForm({ clientId, onSaved }) {
   const [clients, setClients] = useState([])
@@ -23,7 +24,7 @@ export default function ChargeForm({ clientId, onSaved }) {
   }
 
   const loadProjects = async (cid) => {
-    const data = await import('../../services/adminData').then(m => m.getClientProjects(cid))
+    const data = await getAllClientProjects(cid)
     setProjects(data || [])
   }
 

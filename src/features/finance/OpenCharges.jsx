@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { StatusBadge, EmptyState, Skeleton } from '../../components/ui/'
 import { formatMoney, formatDate } from '../../utils/format'
-import { getOpenCharges } from '../../services/adminData'
+import { getOpenCharges } from '../../api/paymentsApi'
 
 export default function OpenCharges() {
   const [charges, setCharges] = useState([])

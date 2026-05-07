@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Input, Button } from '../../components/ui/'
-import { createProject } from '../../services/adminData'
+import { createProject } from '../../api/projectsApi'
 
 export default function ProjectForm({ clientId, onSaved }) {
   const [form, setForm] = useState({

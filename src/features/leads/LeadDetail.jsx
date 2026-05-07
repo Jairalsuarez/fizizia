@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Button, StatusBadge, Modal } from '../../components/ui/'
 import { formatMoney, formatDate } from '../../utils/format'
-import { updateLeadStatus, deleteLead, convertLeadToClient } from '../../services/adminData'
+import { updateLeadStatus, deleteLead, convertLeadToClient } from '../../api/leadsApi'
 
 export default function LeadDetail({ lead, onUpdate }) {
   const [showConvertModal, setShowConvertModal] = useState(false)

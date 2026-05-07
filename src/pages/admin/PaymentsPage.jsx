@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../../features/auth/authContext'
 import { formatDate, formatMoney } from '../../utils/format'
 import { useToast } from '../../components/Toast'
+import { approvePayment, getAllPayments, rejectPayment } from '../../api/paymentsApi'
 
 export function PaymentsPage() {
   const { session } = useAuth()
@@ -10,13 +11,13 @@ export function PaymentsPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('pending')
   const [selectedPayment, setSelectedPayment] = useState(null)
+  const [proofUrl, setProofUrl] = useState(null)
   const [rejectionReason, setRejectionReason] = useState('')
   const [processing, setProcessing] = useState(false)
 
   const loadPayments = useCallback(async () => {
     setLoading(true)
     try {
-      const { getAllPayments } = await import('../../services/adminData')
       const all = await getAllPayments()
       setPayments(all || [])
     } catch {
@@ -25,6 +26,18 @@ export function PaymentsPage() {
       setLoading(false)
     }
   }, [toast])
+
+  const openPaymentDetail = async (payment) => {
+    setSelectedPayment(payment)
+    setRejectionReason('')
+    setProofUrl(payment.proofUrl || null)
+  }
+
+  const closePaymentDetail = () => {
+    setSelectedPayment(null)
+    setProofUrl(null)
+    setRejectionReason('')
+  }
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -43,10 +56,9 @@ export function PaymentsPage() {
     if (!selectedPayment || processing) return
     setProcessing(true)
     try {
-      const { approvePayment } = await import('../../services/adminData')
-      await approvePayment(selectedPayment.id, session?.user?.id)
+       await approvePayment(selectedPayment.id, session?.user?.id)
       toast.success('Pago aprobado')
-      setSelectedPayment(null)
+      closePaymentDetail()
       loadPayments()
     } catch {
       toast.error('Error aprobando pago')
@@ -59,11 +71,9 @@ export function PaymentsPage() {
     if (!selectedPayment || processing) return
     setProcessing(true)
     try {
-      const { rejectPayment } = await import('../../services/adminData')
-      await rejectPayment(selectedPayment.id, session?.user?.id, rejectionReason || 'Sin motivo especificado')
+       await rejectPayment(selectedPayment.id, session?.user?.id, rejectionReason || 'Sin motivo especificado')
       toast.success('Pago rechazado')
-      setSelectedPayment(null)
-      setRejectionReason('')
+      closePaymentDetail()
       loadPayments()
     } catch {
       toast.error('Error rechazando pago')
@@ -137,7 +147,7 @@ export function PaymentsPage() {
           {filtered.map(p => (
             <button
               key={p.id}
-              onClick={() => setSelectedPayment(p)}
+              onClick={() => openPaymentDetail(p)}
               className="cursor-pointer w-full flex items-center justify-between p-4 bg-dark-900/50 border border-dark-800 rounded-xl hover:border-dark-700 transition-all text-left"
             >
               <div className="flex items-center gap-4">
@@ -186,11 +196,11 @@ export function PaymentsPage() {
 
       {/* Payment detail modal */}
       {selectedPayment && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => { setSelectedPayment(null); setRejectionReason('') }}>
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={closePaymentDetail}>
           <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-dark-700">
               <h3 className="text-lg font-bold text-white">Detalle del pago</h3>
-              <button onClick={() => { setSelectedPayment(null); setRejectionReason('') }} className="cursor-pointer text-dark-400 hover:text-white">
+              <button onClick={closePaymentDetail} className="cursor-pointer text-dark-400 hover:text-white">
                 <span className="material-symbols-rounded">close</span>
               </button>
             </div>
@@ -258,31 +268,13 @@ export function PaymentsPage() {
               {selectedPayment.proof_url && (
                 <div>
                   <p className="text-xs text-dark-500 mb-2">Comprobante</p>
-                  <div className="rounded-xl overflow-hidden border border-dark-700 bg-dark-950">
-                    {selectedPayment.proof_url.endsWith('.pdf') ? (
-                      <div className="p-8 flex flex-col items-center gap-2">
-                        <span className="material-symbols-rounded text-5xl text-dark-400">picture_as_pdf</span>
-                        <a
-                          href={selectedPayment.proof_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-fizzia-400 text-sm hover:text-fizzia-300"
-                        >
-                          Ver PDF del comprobante
-                        </a>
-                      </div>
-                    ) : (
-                      <img
-                        src={selectedPayment.proof_url}
-                        alt="Comprobante de pago"
-                        className="w-full max-h-64 object-contain bg-dark-950"
-                        onError={(e) => {
-                          e.target.style.display = 'none'
-                          e.target.parentElement.innerHTML = '<div class="p-8 text-center text-dark-500 text-sm">Error cargando imagen</div>'
-                        }}
-                      />
-                    )}
-                  </div>
+                  <button
+                    onClick={() => window.open(proofUrl, '_blank')}
+                    className="cursor-pointer w-full flex items-center justify-center gap-2 py-4 bg-dark-950 border border-dark-700 rounded-xl hover:border-fizzia-500/50 transition-all group"
+                  >
+                    <span className="material-symbols-rounded text-fizzia-400 group-hover:scale-110 transition-transform">image</span>
+                    <span className="text-fizzia-400 text-sm font-medium">Ver Comprobante</span>
+                  </button>
                 </div>
               )}
 

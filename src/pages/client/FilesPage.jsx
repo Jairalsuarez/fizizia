@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect } from 'react'
 import { Card, Badge, Icon, EmptyState, Skeleton } from '../../components/ui/'
-import { getMyFiles } from '../../services/clientData'
+import { getMyFiles } from '../../api/filesApi'
 import { formatDate } from '../../utils/format'
 
 export function FilesPage() {

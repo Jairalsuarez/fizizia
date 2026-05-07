@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Button, StatusBadge, Modal } from '../../components/ui/'
 import { formatMoney } from '../../utils/format'
-import { deleteClient, updateClient, getAllClientProjects } from '../../services/adminData'
+import { deleteClient, updateClient, getAllClientProjects } from '../../api/clientsApi'
 import ProjectForm from './ProjectForm'
 import { useToast } from '../../components/Toast'
+import { supabase } from '../../services/supabase'
+import { useAuth } from '../../features/auth/authContext'
 
 export default function ClientDetail({ client, onUpdate }) {
+  const { session } = useAuth()
+  const myId = session?.user?.id
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -19,6 +23,8 @@ export default function ClientDetail({ client, onUpdate }) {
     notes: client.notes || '',
   }))
   const [projects, setProjects] = useState([])
+  const [developers, setDevelopers] = useState([])
+  const [projectDevs, setProjectDevs] = useState({})
   const [saving, setSaving] = useState(false)
   const toast = useToast()
 
@@ -27,9 +33,35 @@ export default function ClientDetail({ client, onUpdate }) {
     setProjects(data || [])
   }, [client.id])
 
+  const loadDevelopers = useCallback(async () => {
+    const { data, error } = await supabase.from('profiles').select('id, full_name, email, role')
+    console.log('ALL PROFILES:', data, 'ERROR:', error)
+    const devs = (data || []).filter(p => p?.role === 'developer')
+    setDevelopers(devs)
+
+    let assignments
+    try {
+      const { data: a } = await supabase
+        .from('project_developers')
+        .select('project_id, developer_id, profiles(id, full_name, email)')
+      assignments = a
+    } catch {
+      assignments = []
+    }
+    if (assignments?.length) {
+      const byProject = {}
+      assignments.forEach(a => {
+        if (!byProject[a.project_id]) byProject[a.project_id] = []
+        byProject[a.project_id].push(a.profiles)
+      })
+      setProjectDevs(byProject)
+    }
+  }, [])
+
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     loadProjects()
+    loadDevelopers()
     setEditData({
       name: client.name || '',
       legal_name: client.legal_name || '',
@@ -39,7 +71,7 @@ export default function ClientDetail({ client, onUpdate }) {
       status: client.status || 'active',
       notes: client.notes || '',
     })
-  }, [client.id, loadProjects])
+  }, [client, loadProjects, loadDevelopers])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSaveEdit = async () => {
@@ -65,6 +97,22 @@ export default function ClientDetail({ client, onUpdate }) {
     setShowDeleteModal(false)
     onUpdate()
     toast.success('Cliente eliminado')
+  }
+
+  const assignDeveloper = async (projectId, devId) => {
+    const targetId = devId === 'me' ? myId : devId
+    await supabase.from('project_developers').delete().eq('project_id', projectId)
+    const { data, error: err } = await supabase
+      .from('project_developers')
+      .insert({ project_id: projectId, developer_id: targetId })
+      .select('profiles(full_name, email)')
+      .single()
+    if (data && !err) {
+      setProjectDevs(prev => ({ ...prev, [projectId]: [data.profiles] }))
+      toast.success(devId === 'me' ? 'Te asignaste al proyecto' : 'Developer asignado')
+    } else {
+      toast.error('Error al asignar')
+    }
   }
 
   return (
@@ -122,15 +170,51 @@ export default function ClientDetail({ client, onUpdate }) {
         <h3 className="text-white font-semibold mb-3">Proyectos ({projects.length})</h3>
         {projects.length > 0 ? (
           <div className="space-y-2">
-            {projects.map((project) => (
-              <div key={project.id} className="p-3 rounded bg-dark-800">
-                <div className="flex items-center justify-between">
-                  <p className="text-white font-medium">{project.name}</p>
-                  <StatusBadge status={project.status} size="sm" />
+            {projects.map((project) => {
+              const devs = projectDevs[project.id] || []
+              const assignedDev = devs[0]
+              const assignedId = assignedDev?.id
+              const allOptions = [
+                { id: 'me', label: 'Tu', icon: 'person' },
+                ...developers.map(d => ({ id: d.id, label: d.full_name || d.email, icon: 'code' })),
+              ]
+              return (
+                <div key={project.id} className="p-3 rounded bg-dark-800">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-medium">{project.name}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <StatusBadge status={project.status} size="sm" />
+                        <span className="text-sm text-dark-400">{formatMoney(project.final_price || project.budget || 0)}{project.final_price && project.budget ? ' (presupuesto: ' + formatMoney(project.budget) + ')' : ''}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-dark-500 uppercase tracking-wider font-medium mb-2">Developer asignado</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {allOptions.map(opt => {
+                        const isActive = (opt.id === 'me' && assignedId === myId) || opt.id === assignedId
+                        return (
+                          <button
+                            key={opt.id}
+                            onClick={() => assignDeveloper(project.id, opt.id)}
+                            className={`cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                              isActive
+                                ? 'bg-fizzia-500/20 border-fizzia-500/40 text-fizzia-300'
+                                : 'bg-dark-950 border-dark-700 text-dark-400 hover:text-white hover:border-dark-500'
+                            }`}
+                          >
+                            <span className="material-symbols-rounded text-sm">{opt.icon}</span>
+                            {opt.label}
+                            {isActive && <span className="material-symbols-rounded text-xs text-fizzia-400">check</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
                 </div>
-                <p className="text-sm text-dark-400 mt-1">{formatMoney(project.final_price || project.budget || 0)}{project.final_price && project.budget ? ' (presupuesto: ' + formatMoney(project.budget) + ')' : ''}</p>
-              </div>
-            ))}
+              )
+            })}
           </div>
         ) : (
           <p className="text-dark-500 text-sm">No hay proyectos</p>

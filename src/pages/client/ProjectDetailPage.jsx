@@ -1,11 +1,22 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getProjectFiles, uploadProjectFile, getProjectMessages, sendProjectMessage, subscribeToMessages, getProjectFileRequests, getProjectInvoices, getProjectDirectPayments, createClientPayment, uploadPaymentProof } from '../../services/clientData'
+import { getProjectMessages, markProjectMessagesRead, sendProjectMessage, subscribeToMessages } from '../../api/messagesApi'
+import { createClientPayment, getProjectDirectPayments, getProjectInvoices, uploadPaymentProof } from '../../api/paymentsApi'
+import { fulfillFileRequest, getClientProjectFileRequests, getMyProjects } from '../../api/projectsApi'
+import { getProjectFiles, uploadProjectFile } from '../../api/filesApi'
 import { formatDate, formatMoney } from '../../utils/format'
 import { useToast } from '../../components/Toast'
 import { supabase } from '../../services/supabase'
 import { useAuth } from '../../features/auth/authContext'
 import { loadScript } from '@paypal/paypal-js'
+import { AvatarIcon } from '../../data/avatars.jsx'
+import { fetchGitHubCommits, formatCommitTime, getCommitAuthorName, getCommitDate, parseGitHubUrl } from '../../utils/github'
+import { getMessageAuthor, getMessageAuthorName, getMessageAvatarId } from '../../utils/messageIdentity'
+import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../../utils/messageStatus'
+import { sumApprovedPayments } from '../../utils/paymentStatus'
+
+let pendingId = Date.now()
+function genId() { return `pending-${pendingId++}` }
 
 const phases = [
   { key: 'solicitado', label: 'Solicitado', textColor: 'text-fizzia-400' },
@@ -20,11 +31,13 @@ export function ProjectDetailPage() {
   const { projectId } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
-  const { session } = useAuth()
+  const { session, user } = useAuth()
   const [project, setProject] = useState(null)
   const [files, setFiles] = useState([])
   const [messages, setMessages] = useState([])
+  const [messageAuthors, setMessageAuthors] = useState({})
   const [newMessage, setNewMessage] = useState('')
+  const [visibleTimeMessageId, setVisibleTimeMessageId] = useState(null)
   const [fileRequests, setFileRequests] = useState([])
   const [invoices, setInvoices] = useState([])
   const [payments, setPayments] = useState([])
@@ -54,10 +67,13 @@ export function ProjectDetailPage() {
   const [paypalProcessing, setPaypalProcessing] = useState(false)
   const [paymentSubmitting, setPaymentSubmitting] = useState(false)
   const [paymentSuccess, setPaymentSuccess] = useState(false)
+  const [commits, setCommits] = useState([])
+  const [commitsLoading, setCommitsLoading] = useState(false)
   const proofInputRef = useRef(null)
 
   const projectTotal = project?.final_price || project?.budget || 0
-  const pending = projectTotal - payments.reduce((s, p) => s + Number(p.amount || 0), 0)
+  const approvedPaid = sumApprovedPayments(payments)
+  const pending = Math.max(projectTotal - approvedPaid, 0)
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -110,7 +126,6 @@ export function ProjectDetailPage() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const { getMyProjects } = await import('../../services/clientData')
         const projects = await getMyProjects()
         const found = projects?.find(p => p.id === projectId)
         if (!found) {
@@ -130,7 +145,7 @@ export function ProjectDetailPage() {
         const [filesRes, msgsRes, fileReqsRes, invoicesRes, directPaymentsRes] = await Promise.all([
           getProjectFiles(projectId),
           getProjectMessages(projectId),
-          getProjectFileRequests(projectId),
+          getClientProjectFileRequests(projectId),
           getProjectInvoices(projectId),
           getProjectDirectPayments(projectId),
         ])
@@ -170,10 +185,51 @@ export function ProjectDetailPage() {
 
   useEffect(() => {
     if (project && activeTab === 'mensajes') {
-      channelRef.current = subscribeToMessages(project.id, (payload) => setMessages(prev => [...prev, payload]))
+      markProjectMessagesRead(project.id).then(readMessages => {
+        if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
+      })
+      channelRef.current = subscribeToMessages(project.id, (payload) => {
+        setMessages(prev => mergeRealtimeMessage(prev, payload))
+        if (payload?.sender_id !== session?.user?.id) {
+          markProjectMessagesRead(project.id).then(readMessages => {
+            if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
+          })
+        }
+      })
     }
     return () => { if (channelRef.current) channelRef.current.unsubscribe() }
-  }, [project, activeTab])
+  }, [project, activeTab, session?.user?.id])
+
+  useEffect(() => {
+    const ids = [...new Set(messages.map(m => m.sender_id).filter(Boolean))]
+      .filter(id => !messageAuthors[id])
+    if (!ids.length) return
+    let cancelled = false
+    supabase
+      .from('profiles')
+      .select('id, full_name, first_name, email, avatar_id, role')
+      .in('id', ids)
+      .then(({ data }) => {
+        if (cancelled) return
+        setMessageAuthors(prev => ({
+          ...prev,
+          ...Object.fromEntries((data || []).map(profile => [profile.id, profile])),
+        }))
+      })
+    return () => { cancelled = true }
+  }, [messages, messageAuthors])
+
+  useEffect(() => {
+    const repo = project?.repo_url || project?.repository_url
+    if (activeTab !== 'actividad' || !repo) return
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCommitsLoading(true)
+    fetchGitHubCommits(repo, 15)
+      .then(data => { if (!cancelled) setCommits(data || []) })
+      .finally(() => { if (!cancelled) setCommitsLoading(false) })
+    return () => { cancelled = true }
+  }, [activeTab, project])
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
@@ -290,7 +346,23 @@ export function ProjectDetailPage() {
     if (!newMessage.trim() || !project) return
     const content = newMessage.trim()
     setNewMessage('')
-    try { await sendProjectMessage(project.id, content) } catch { toast.error('Error enviando mensaje') }
+    const tempId = genId()
+    const tempMsg = {
+      id: tempId,
+      project_id: project.id,
+      sender_id: session?.user?.id,
+      content,
+      created_at: new Date().toISOString(),
+      _status: 'sending',
+    }
+    setMessages(prev => [...prev, tempMsg])
+    try {
+      const msg = await sendProjectMessage(project.id, content)
+      setMessages(prev => markMessageSent(prev, tempId, msg))
+    } catch {
+      setMessages(prev => markMessageFailed(prev, tempId))
+      toast.error('Error enviando mensaje')
+    }
   }
 
   const handleSaveEdit = async (e) => {
@@ -364,7 +436,6 @@ export function ProjectDetailPage() {
       } else {
         setFiles(prev => [result.data, ...prev])
         if (fulfillingRequestId) {
-          const { fulfillFileRequest } = await import('../../services/clientData')
           await fulfillFileRequest(fulfillingRequestId, result.data.id)
           setFileRequests(prev => prev.map(r => r.id === fulfillingRequestId ? { ...r, fulfilled: true } : r))
           setFulfillingRequestId(null)
@@ -551,6 +622,7 @@ export function ProjectDetailPage() {
           { key: 'info', label: 'Detalles' },
           { key: 'mensajes', label: 'Mensajes' },
           { key: 'pagos', label: 'Pagos' },
+          { key: 'actividad', label: 'Cambios' },
           { key: 'files', label: 'Archivos' },
         ].map(tab => (
           <button
@@ -600,21 +672,21 @@ export function ProjectDetailPage() {
               <p className="text-white font-semibold">{formatDate(project.created_at)}</p>
             </div>
           </div>
-          {(project.repo_url || project.live_url || project.notes) && (
+          {(project.repo_url || project.repository_url || project.live_url || project.notes) && (
             <div className="pt-4 border-t border-dark-700 space-y-4">
-              {project.repo_url && (
+              {(project.repo_url || project.repository_url) && (
                 <a
-                  href={project.repo_url}
+                  href={project.repo_url || project.repository_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-3 p-3 bg-dark-800/50 rounded-xl hover:bg-dark-800 transition-all group"
+                  className="cursor-pointer flex items-center gap-3 p-3 bg-dark-800/50 rounded-xl hover:bg-dark-800 transition-all group"
                 >
                   <div className="w-10 h-10 bg-dark-700 rounded-lg flex items-center justify-center">
                     <span className="material-symbols-rounded text-fizzia-400">code</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm font-medium">Repositorio</p>
-                    <p className="text-dark-400 text-xs truncate">{project.repo_url}</p>
+                    <p className="text-dark-400 text-xs truncate">{project.repo_url || project.repository_url}</p>
                   </div>
                   <span className="material-symbols-rounded text-dark-500 group-hover:text-white transition-colors">open_in_new</span>
                 </a>
@@ -624,7 +696,7 @@ export function ProjectDetailPage() {
                   href={project.live_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-3 p-3 bg-dark-800/50 rounded-xl hover:bg-dark-800 transition-all group"
+                  className="cursor-pointer flex items-center gap-3 p-3 bg-dark-800/50 rounded-xl hover:bg-dark-800 transition-all group"
                 >
                   <div className="w-10 h-10 bg-dark-700 rounded-lg flex items-center justify-center">
                     <span className="material-symbols-rounded text-green-400">language</span>
@@ -658,14 +730,57 @@ export function ProjectDetailPage() {
             ) : (
               messages.map((msg) => {
                 const isMine = msg.sender_id === session?.user?.id
+                const status = getDeliveryStatus(msg, isMine)
+                const author = getMessageAuthor(msg, messageAuthors)
+                const authorName = getMessageAuthorName({ message: msg, isMine, author, clientName: 'Equipo' })
+                const avatarId = getMessageAvatarId({ message: msg, isMine, author, currentUser: user })
+                const time = new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+                const showTime = visibleTimeMessageId === msg.id
                 return (
-                  <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[70%] px-4 py-2.5 rounded-xl text-sm ${isMine ? 'bg-fizzia-500/20 text-fizzia-300 rounded-br-sm' : 'bg-dark-800 text-dark-200 rounded-bl-sm'}`}>
-                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                      <p className={`text-[10px] mt-1 ${isMine ? 'text-fizzia-500/50' : 'text-dark-500'}`}>
-                        {new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}
-                      </p>
+                  <div key={msg.id} className={`flex items-end gap-2 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                    {!isMine && (
+                      <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
+                        <AvatarIcon id={avatarId || '2'} size={32} />
+                      </div>
+                    )}
+                    <div className={`max-w-[70%] ${isMine ? 'items-end' : 'items-start'} flex flex-col`}>
+                      <div className={`mb-1 flex items-center gap-2 text-[11px] ${isMine ? 'justify-end text-fizzia-400' : 'text-dark-400'}`}>
+                        <span className="font-medium">{authorName}</span>
+                      </div>
+                      <div className={`flex items-end gap-1.5 ${isMine ? 'flex-row-reverse' : ''}`}>
+                        <button
+                          type="button"
+                          onClick={() => setVisibleTimeMessageId(prev => prev === msg.id ? null : msg.id)}
+                          className={`cursor-pointer px-4 py-2.5 rounded-2xl text-sm text-left shadow-sm ${
+                            isMine
+                              ? status === 'error' ? 'bg-red-500/80 text-white rounded-br-sm'
+                              : 'bg-fizzia-500 text-white rounded-br-sm'
+                              : 'bg-dark-800 text-dark-100 rounded-bl-sm'
+                          }`}
+                        >
+                          <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                        </button>
+                        {isMine && (
+                          <span className={`mb-1 flex h-4 w-4 items-center justify-center ${status === 'error' ? 'text-red-400' : 'text-dark-500'}`}>
+                            {status === 'sending' && (
+                              <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            )}
+                            {status === 'sent' && <span className="material-symbols-rounded text-[13px]">check</span>}
+                            {status === 'read' && <span className="material-symbols-rounded text-[13px] text-sky-400">done_all</span>}
+                            {status === 'error' && <span className="material-symbols-rounded text-[13px]">error</span>}
+                          </span>
+                        )}
+                      </div>
+                      {showTime && <span className="mt-1 text-[10px] text-dark-500">{time}</span>}
                     </div>
+                    {isMine && (
+                      <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
+                        <AvatarIcon id={avatarId || '1'} size={32} />
+                      </div>
+                    )}
                   </div>
                 )
               })
@@ -681,6 +796,70 @@ export function ProjectDetailPage() {
         </div>
       )}
 
+      {activeTab === 'actividad' && (
+        <div className="bg-dark-900/50 border border-dark-800 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h3 className="text-white font-semibold">Cambios del proyecto</h3>
+              <p className="text-dark-500 text-xs mt-1">
+                {parseGitHubUrl(project.repo_url || project.repository_url)
+                  ? 'Commits recientes del repositorio'
+                  : 'El equipo configurara el repositorio de GitHub cuando este disponible'}
+              </p>
+            </div>
+            {(project.repo_url || project.repository_url) && (
+              <a
+                href={project.repo_url || project.repository_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="cursor-pointer text-fizzia-400 hover:text-fizzia-300 text-sm font-medium"
+              >
+                Ver repo
+              </a>
+            )}
+          </div>
+          {commitsLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="h-16 rounded-xl bg-dark-800 animate-pulse" />
+              ))}
+            </div>
+          ) : commits.length ? (
+            <div className="space-y-3">
+              {commits.map(commit => (
+                <a
+                  key={commit.sha}
+                  href={commit.html_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="cursor-pointer flex items-start gap-3 rounded-xl border border-dark-800 bg-dark-950/70 p-4 hover:border-dark-700 transition-all"
+                >
+                  <div className="mt-0.5 h-8 w-8 rounded-full overflow-hidden bg-dark-800 shrink-0">
+                    {commit.author?.avatar_url ? (
+                      <img src={commit.author.avatar_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="material-symbols-rounded text-dark-500 flex h-full w-full items-center justify-center text-base">commit</span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-white text-sm font-medium truncate">{commit.commit?.message?.split('\n')[0]}</p>
+                    <p className="text-dark-500 text-xs mt-1">
+                        {getCommitAuthorName(commit)} · {formatCommitTime(getCommitDate(commit))}
+                    </p>
+                  </div>
+                  <code className="text-dark-500 text-xs">{commit.sha?.slice(0, 7)}</code>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <span className="material-symbols-rounded text-dark-600 text-4xl">commit</span>
+              <p className="text-dark-400 text-sm mt-2">No hay commits disponibles</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {activeTab === 'pagos' && (
         <div className="space-y-4">
           {/* Summary */}
@@ -691,7 +870,7 @@ export function ProjectDetailPage() {
             </div>
             <div className="bg-dark-900/50 border border-dark-800 rounded-xl p-4 text-center">
               <p className="text-xs text-dark-500 mb-1">Pagado</p>
-              <p className="text-lg font-bold text-green-400">{formatMoney(payments.reduce((s, p) => s + Number(p.amount || 0), 0))}</p>
+              <p className="text-lg font-bold text-green-400">{formatMoney(approvedPaid)}</p>
             </div>
             <div className="bg-dark-900/50 border border-dark-800 rounded-xl p-4 text-center">
               <p className="text-xs text-dark-500 mb-1">Pendiente</p>

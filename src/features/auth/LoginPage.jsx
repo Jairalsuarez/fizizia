@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { signIn, resetPassword } from '../../services/adminData'
+import { signIn, resetPassword } from '../../api/authApi'
 import { supabase } from '../../services/supabase'
 import { useAuth } from './authContext'
+import { getRoleHome } from './roles'
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
@@ -31,12 +32,7 @@ export function LoginPage() {
       if (session && user && !loading && !redirecting) {
         setRedirecting(true)
         await new Promise(r => setTimeout(r, 800))
-        const userRole = user.role
-        if (['admin', 'manager'].includes(userRole)) {
-          navigate('/admin', { replace: true })
-        } else {
-          navigate('/cliente', { replace: true })
-        }
+        navigate(getRoleHome(user.role), { replace: true })
       }
     }
     redirect()

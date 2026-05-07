@@ -236,12 +236,26 @@ export async function sendAdminMessage(projectId, content) {
   return data
 }
 
+export async function markAdminProjectMessagesRead(projectId) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return []
+  const { data, error } = await supabase
+    .from('messages')
+    .update({ read_at: new Date().toISOString(), read_by: user.id })
+    .eq('project_id', projectId)
+    .neq('sender_id', user.id)
+    .is('read_at', null)
+    .select()
+  if (error) console.error('Error marking admin messages as read:', error)
+  return data || []
+}
+
 export function subscribeToAdminMessages(projectId, callback) {
   return supabase
     .channel(`admin-messages:${projectId}`)
     .on(
       'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
+      { event: '*', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
       (payload) => callback(payload.new)
     )
     .subscribe()
@@ -442,18 +456,74 @@ export async function getAllPendingPayments() {
   return data || []
 }
 
+export async function getPaymentProofUrl(proofPath) {
+  if (!proofPath) return null
+  
+  // If it's a full URL from old uploads, extract the path
+  let path = proofPath
+  if (proofPath.startsWith('http')) {
+    // Extract path after /object/public/ or /object/authenticated/
+    const match = proofPath.match(/\/object\/(?:public|authenticated)\/[^/]+\/(.+)$/)
+    if (match) {
+      path = match[1]
+    } else {
+      return proofPath // Fallback: return original URL
+    }
+  }
+  
+  // Generate signed URL for private bucket
+  const { data, error } = await supabase.storage
+    .from('project-files')
+    .createSignedUrl(path, 3600)
+  if (error) {
+    console.error('Error generating signed URL:', error)
+    return null
+  }
+  return data.signedUrl
+}
+
 export async function getAllPayments() {
-  console.log('Fetching all payments...')
+  console.log('Fetching all payments (no joins)...')
   const { data, error } = await supabase
     .from('payments')
-    .select(`
-      *,
-      projects!left(name, final_price, budget, client_id),
-      clients!left(name, email)
-    `)
+    .select('*')
     .order('created_at', { ascending: false })
   console.log('Payments result:', data?.length, 'rows, error:', error)
-  return data || []
+
+  if (!data?.length) return []
+
+  const projectIds = [...new Set(data.map(p => p.project_id).filter(Boolean))]
+  const clientIds = [...new Set(data.map(p => p.client_id).filter(Boolean))]
+
+  let projectsMap = {}
+  let clientsMap = {}
+  if (projectIds.length) {
+    const { data: projects } = await supabase.from('projects').select('id, name, final_price, budget').in('id', projectIds)
+    projectsMap = Object.fromEntries(projects.map(p => [p.id, p]))
+  }
+  if (clientIds.length) {
+    const { data: clients } = await supabase.from('clients').select('id, name, email').in('id', clientIds)
+    clientsMap = Object.fromEntries(clients.map(c => [c.id, c]))
+  }
+
+  const enriched = data.map(p => ({
+    ...p,
+    projects: p.project_id ? projectsMap[p.project_id] || null : null,
+    clients: p.client_id ? clientsMap[p.client_id] || null : null,
+  }))
+
+  // Pre-resolve all signed URLs in parallel
+  const resolvedPayments = await Promise.all(
+    enriched.map(async (p) => {
+      if (p.proof_url) {
+        const proofUrl = await getPaymentProofUrl(p.proof_url)
+        return { ...p, proofUrl }
+      }
+      return { ...p, proofUrl: null }
+    })
+  )
+
+  return resolvedPayments
 }
 
 export async function approvePayment(paymentId, reviewedBy) {

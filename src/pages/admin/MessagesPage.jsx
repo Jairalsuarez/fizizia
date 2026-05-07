@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
-import { getAllProjects, getAdminProjectMessages, sendAdminMessage, subscribeToAdminMessages, uploadProjectFileAdmin, getAllProjectFiles, deleteProjectFile } from '../../services/adminData'
+import { getAllProjects } from '../../api/projectsApi'
+import { getAdminProjectMessages, markAdminProjectMessagesRead, sendAdminMessage, subscribeToAdminMessages } from '../../api/messagesApi'
+import { deleteProjectFile, getAllProjectFiles, uploadProjectFileAdmin } from '../../api/filesApi'
 import { supabase } from '../../services/supabase'
 import { useToast } from '../../components/Toast'
+import { AvatarIcon } from '../../data/avatars.jsx'
+import { getMessageAuthor, getMessageAuthorName, getMessageAvatarId } from '../../utils/messageIdentity'
+import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../../utils/messageStatus'
+
+let pendingId = Date.now()
+function genId() { return `pending-${pendingId++}` }
 
 const statusLabels = {
   solicitado: '📋 Solicitado',
@@ -16,7 +24,9 @@ export function MessagesPage() {
   const [projects, setProjects] = useState([])
   const [selectedProject, setSelectedProject] = useState(null)
   const [messages, setMessages] = useState([])
+  const [messageAuthors, setMessageAuthors] = useState({})
   const [newMessage, setNewMessage] = useState('')
+  const [visibleTimeMessageId, setVisibleTimeMessageId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [myId, setMyId] = useState(null)
   const [activeTab, setActiveTab] = useState('messages')
@@ -49,6 +59,9 @@ export function MessagesPage() {
       const loadMessages = async () => {
         const msgs = await getAdminProjectMessages(selectedProject.id)
         setMessages(msgs)
+        markAdminProjectMessagesRead(selectedProject.id).then(readMessages => {
+          if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
+        })
         const files = await getAllProjectFiles(selectedProject.id)
         setProjectFiles(files)
       }
@@ -59,7 +72,12 @@ export function MessagesPage() {
       }
 
       channelRef.current = subscribeToAdminMessages(selectedProject.id, (payload) => {
-        setMessages(prev => [...prev, payload])
+        setMessages(prev => mergeRealtimeMessage(prev, payload))
+        if (payload?.sender_id !== myId) {
+          markAdminProjectMessagesRead(selectedProject.id).then(readMessages => {
+            if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
+          })
+        }
       })
     }
     return () => {
@@ -67,20 +85,52 @@ export function MessagesPage() {
         channelRef.current.unsubscribe()
       }
     }
-  }, [selectedProject])
+  }, [selectedProject, myId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    const ids = [...new Set(messages.map(message => message.sender_id).filter(Boolean))]
+      .filter(id => !messageAuthors[id])
+    if (!ids.length) return
+    let cancelled = false
+    supabase
+      .from('profiles')
+      .select('id, full_name, first_name, email, avatar_id, role')
+      .in('id', ids)
+      .then(({ data }) => {
+        if (cancelled) return
+        setMessageAuthors(prev => ({
+          ...prev,
+          ...Object.fromEntries((data || []).map(profile => [profile.id, profile])),
+        }))
+      })
+    return () => { cancelled = true }
+  }, [messages, messageAuthors])
 
   const handleSend = async (e) => {
     e.preventDefault()
     if (!newMessage.trim() || !selectedProject) return
     const content = newMessage.trim()
     setNewMessage('')
+    const tempId = genId()
+    const tempMsg = {
+      id: tempId,
+      project_id: selectedProject.id,
+      sender_id: myId,
+      content,
+      created_at: new Date().toISOString(),
+      is_admin_sender: true,
+      _status: 'sending',
+    }
+    setMessages(prev => [...prev, tempMsg])
     try {
-      await sendAdminMessage(selectedProject.id, content)
+      const msg = await sendAdminMessage(selectedProject.id, content)
+      setMessages(prev => markMessageSent(prev, tempId, msg || {}))
     } catch {
+      setMessages(prev => markMessageFailed(prev, tempId))
       console.error('Error sending message')
     }
   }
@@ -224,19 +274,49 @@ export function MessagesPage() {
                   ) : (
                     messages.map((msg) => {
                       const isAdmin = msg.sender_id === myId || msg.is_admin_sender
+                      const status = getDeliveryStatus(msg, isAdmin)
+                      const author = getMessageAuthor(msg, messageAuthors)
+                      const authorName = getMessageAuthorName({ message: msg, isMine: isAdmin, author, clientName: selectedProject.clients?.name || 'Cliente' })
+                      const avatarId = getMessageAvatarId({ message: msg, isMine: isAdmin, author, currentUser: messageAuthors[myId] })
+                      const time = new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+                      const showTime = visibleTimeMessageId === msg.id
                       return (
-                        <div key={msg.id} className={`flex ${isAdmin ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-sm lg:max-w-md px-4 py-3 rounded-2xl text-sm ${
+                        <div key={msg.id} className={`flex items-end gap-2 ${isAdmin ? 'justify-end' : 'justify-start'}`}>
+                          {!isAdmin && (
+                            <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
+                              <AvatarIcon id={avatarId} size={32} />
+                            </div>
+                          )}
+                          <div onClick={() => setVisibleTimeMessageId(prev => prev === msg.id ? null : msg.id)} className={`cursor-pointer max-w-sm lg:max-w-md px-4 py-3 rounded-2xl text-sm ${
                             isAdmin
-                              ? 'bg-fizzia-500/20 text-fizzia-300 rounded-br-md'
+                              ? status === 'error' ? 'bg-red-500/80 text-white rounded-br-md' : 'bg-fizzia-500 text-white rounded-br-md'
                               : 'bg-dark-800 text-dark-200 rounded-bl-md'
                           }`}>
+                            <p className={`text-[11px] font-medium mb-1 ${isAdmin ? 'text-white/80' : 'text-dark-400'}`}>{authorName}</p>
                             <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                            <p className={`text-xs mt-1 ${isAdmin ? 'text-fizzia-500/60' : 'text-dark-500'}`}>
-                              {new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}
+                            {showTime && <p className={`text-xs mt-1 ${isAdmin ? 'text-white/60' : 'text-dark-500'}`}>
+                              {time}
                               {isAdmin && <span className="ml-1">(tú)</span>}
-                            </p>
+                            </p>}
                           </div>
+                          {isAdmin && (
+                            <span className={`mb-1 flex h-4 w-4 items-center justify-center ${status === 'error' ? 'text-red-400' : 'text-dark-500'}`}>
+                              {status === 'sending' && (
+                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                              )}
+                              {status === 'sent' && <span className="material-symbols-rounded text-[13px]">check</span>}
+                              {status === 'read' && <span className="material-symbols-rounded text-[13px] text-sky-400">done_all</span>}
+                              {status === 'error' && <span className="material-symbols-rounded text-[13px]">error</span>}
+                            </span>
+                          )}
+                          {isAdmin && (
+                            <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
+                              <AvatarIcon id={avatarId} size={32} />
+                            </div>
+                          )}
                         </div>
                       )
                     })

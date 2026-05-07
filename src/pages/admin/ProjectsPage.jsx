@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { StatusBadge, EmptyState, Skeleton } from '../../components/ui/'
 import { formatMoney, formatDate } from '../../utils/format'
-import { getAllProjects } from '../../services/adminData'
+import { getAllProjects } from '../../api/projectsApi'
 
 const FINISHED_STATUSES = ['entregado', 'cancelado']
 

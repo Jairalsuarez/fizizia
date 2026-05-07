@@ -1,8 +1,9 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect } from 'react'
 import { Card, StatusBadge, Skeleton, EmptyState } from '../../components/ui/'
-import { getMyInvoices } from '../../services/clientData'
+import { getMyInvoices } from '../../api/paymentsApi'
 import { formatMoney, formatDate } from '../../utils/format'
+import { getAcceptedInvoiceTotal } from '../../utils/paymentStatus'
 
 export function FinancesPage() {
   const [invoices, setInvoices] = useState([])
@@ -50,10 +51,15 @@ export function FinancesPage() {
     )
   }
 
-  const totalBudget = invoices.reduce((sum, inv) => sum + (inv.total || 0), 0)
-  const totalPaid = invoices.filter(inv => inv.status === 'paid').reduce((sum, inv) => sum + (inv.total || 0), 0)
-  const totalPending = invoices.filter(inv => ['pending', 'sent'].includes(inv.status)).reduce((sum, inv) => sum + (inv.total || 0), 0)
-  const totalOverdue = invoices.filter(inv => inv.status === 'overdue').reduce((sum, inv) => sum + (inv.total || 0), 0)
+  const totalBudget = invoices.reduce((sum, inv) => sum + Number(inv.total || 0), 0)
+  const totalPaid = invoices.reduce((sum, inv) => sum + getAcceptedInvoiceTotal(inv), 0)
+  const totalPending = invoices.reduce((sum, inv) => {
+    if (!['pending', 'sent', 'paid'].includes(inv.status)) return sum
+    return sum + Math.max(Number(inv.total || 0) - getAcceptedInvoiceTotal(inv), 0)
+  }, 0)
+  const totalOverdue = invoices.filter(inv => inv.status === 'overdue').reduce((sum, inv) => {
+    return sum + Math.max(Number(inv.total || 0) - getAcceptedInvoiceTotal(inv), 0)
+  }, 0)
 
   return (
     <div className="space-y-6 p-6">
@@ -114,11 +120,16 @@ export function FinancesPage() {
                         <StatusBadge status={invoice.status} />
                       </td>
                       <td className="py-4 text-right">
+                        {(() => {
+                          const acceptedTotal = getAcceptedInvoiceTotal(invoice)
+                          return (
                         <p className={`text-sm font-medium ${
-                          invoice.status === 'paid' ? 'text-green-400' : 'text-dark-300'
+                          acceptedTotal > 0 ? 'text-green-400' : 'text-dark-300'
                         }`}>
-                          {invoice.status === 'paid' ? formatMoney(invoice.total) : '-'}
+                          {acceptedTotal > 0 ? formatMoney(acceptedTotal) : '-'}
                         </p>
+                          )
+                        })()}
                       </td>
                     </tr>
                   ))}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../features/auth/authContext'
-import { getMyProjects } from '../services/clientData'
+import { getMyProjects } from '../api/projectsApi'
+import { getProjectStatusLabel } from '../domain/projects'
 
 export function NotificationBell({ unreadCount }) {
   const { session } = useAuth()
@@ -18,18 +19,6 @@ export function NotificationBell({ unreadCount }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const getPhaseLabel = (status) => {
-    const labels = {
-      solicitado: 'Solicitado',
-      preparando: 'Preparando',
-      trabajando: 'Trabajando',
-      paused: 'Pausado',
-      delivered: 'Entregado',
-      cancelled: 'Cancelado',
-    }
-    return labels[status] || status
-  }
-
   useEffect(() => {
     if (!session?.user) return
 
@@ -39,7 +28,7 @@ export function NotificationBell({ unreadCount }) {
         const notifs = (projects || []).map(p => ({
           id: p.id,
           title: p.name,
-          message: `Proyecto en fase: ${getPhaseLabel(p.status)}`,
+          message: `Proyecto en fase: ${getProjectStatusLabel(p.status)}`,
           time: p.created_at,
           type: p.status === 'solicitado' ? 'info' : 'success',
           read: p.status !== 'solicitado',

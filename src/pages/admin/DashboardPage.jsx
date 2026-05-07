@@ -4,10 +4,12 @@ import { useDashboardData } from '../../hooks/useDashboardData'
 import { ProjectCard, ProjectCardSkeleton, EmptyProjects } from '../../components/ProjectCard'
 import { StatusBadge } from '../../components/ui/'
 import { formatDate } from '../../utils/format'
+import { useAuth } from '../../features/auth/authContext'
 
 const WORKING_STATUSES = ['preparando', 'trabajando', 'pausado']
 
 export function DashboardPage() {
+  const { user } = useAuth()
   const { data, loading, error, refreshData } = useDashboardData()
   const [tab, setTab] = useState('proyectos')
 
@@ -30,7 +32,9 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+      <h1 className="text-2xl font-bold text-white">
+        Bienvenido, {user?.full_name?.split(' ')[0] || user?.first_name || 'Admin'}, es hora de trabajar
+      </h1>
 
       {/* Tabs */}
       <div className="flex gap-1 bg-dark-800 rounded-lg p-0.5 w-fit">

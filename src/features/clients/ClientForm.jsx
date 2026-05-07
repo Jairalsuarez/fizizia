@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Input, Button } from '../../components/ui/'
-import { createClient } from '../../services/adminData'
+import { createClient } from '../../api/clientsApi'
 
 export default function ClientForm({ onSaved }) {
   const [form, setForm] = useState({

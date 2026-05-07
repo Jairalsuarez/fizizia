@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from './authContext'
+import { canAccessRoleArea, getRoleHome, normalizeRole, ROLES } from './roles'
 
 export function ProtectedRoute({ role }) {
   const { session, user, loading } = useAuth()
@@ -20,14 +21,14 @@ export function ProtectedRoute({ role }) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
-  const userRole = user?.role || session.user?.user_metadata?.role || 'client'
+  const userRole = normalizeRole(user?.role || session.user?.user_metadata?.role)
 
-  if (role === 'admin' && !['admin', 'manager'].includes(userRole)) {
-    return <Navigate to="/cliente" replace />
+  if (!canAccessRoleArea(role, userRole)) {
+    return <Navigate to={getRoleHome(userRole)} replace />
   }
 
-  if (role === 'client' && ['admin', 'manager'].includes(userRole)) {
-    return <Navigate to="/admin" replace />
+  if (role === 'client' && userRole !== ROLES.CLIENT) {
+    return <Navigate to={getRoleHome(userRole)} replace />
   }
 
   return <Outlet />

@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { StatusBadge, EmptyState, Skeleton } from '../../components/ui/'
 import { formatDate } from '../../utils/format'
-import { getLeads } from '../../services/adminData'
+import { getLeads } from '../../api/leadsApi'
 
 export default function LeadList({ selectedId, onSelect, statusFilter, onStatusFilterChange }) {
   const [leads, setLeads] = useState([])

@@ -66,7 +66,7 @@ export async function getMyInvoices() {
   if (!client) return []
   const { data } = await supabase
     .from('invoices')
-    .select('*')
+    .select('*, payments(*)')
     .eq('client_id', client.id)
   return data || []
 }
@@ -135,12 +135,26 @@ export async function sendProjectMessage(projectId, content) {
   return data
 }
 
+export async function markProjectMessagesRead(projectId) {
+  const userId = await getCurrentUserId()
+  if (!userId) return []
+  const { data, error } = await supabase
+    .from('messages')
+    .update({ read_at: new Date().toISOString(), read_by: userId })
+    .eq('project_id', projectId)
+    .neq('sender_id', userId)
+    .is('read_at', null)
+    .select()
+  if (error) console.error('Error marking messages as read:', error)
+  return data || []
+}
+
 export function subscribeToMessages(projectId, callback) {
   return supabase
     .channel(`messages:${projectId}`)
     .on(
       'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
+      { event: '*', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
       (payload) => callback(payload.new)
     )
     .subscribe()
@@ -385,11 +399,7 @@ export async function uploadPaymentProof(file) {
 
   if (uploadError) return { data: null, error: uploadError }
 
-  const { data: publicUrl } = supabase.storage
-    .from('project-files')
-    .getPublicUrl(filePath)
-
-  return { data: publicUrl.publicUrl, error: null }
+  return { data: filePath, error: null }
 }
 
 export async function uploadProjectFile(projectId, file, uploaderId = null, note = '') {

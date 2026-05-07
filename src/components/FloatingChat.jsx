@@ -1,22 +1,58 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../features/auth/authContext'
-import { getMyProjects, getProjectMessages, sendProjectMessage, subscribeToMessages } from '../services/clientData'
+import { getMyProjects } from '../api/projectsApi'
+import { getProjectMessages, markProjectMessagesRead, sendProjectMessage, subscribeToMessages } from '../api/messagesApi'
 import { useToast } from '../components/Toast'
+import { AvatarIcon } from '../data/avatars.jsx'
+import { supabase } from '../services/supabase'
+import { getMessageAuthor, getMessageAvatarId } from '../utils/messageIdentity'
+import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../utils/messageStatus'
+
+let pendingId = Date.now()
+function genId() { return `pending-${pendingId++}` }
+
+function countUnreadMessages(messages, userId) {
+  return (messages || []).filter(message => message.sender_id !== userId && !message.read_at).length
+}
+
+async function loadUnreadTotal(projects, userId) {
+  if (!userId || !projects.length) return 0
+  let total = 0
+  for (const project of projects) {
+    try {
+      const messages = await getProjectMessages(project.id)
+      total += countUnreadMessages(messages, userId)
+    } catch {
+      // Keep the badge resilient if one project query fails.
+    }
+  }
+  return total
+}
 
 export function FloatingChat({ onUnreadChange }) {
-  const { session } = useAuth()
+  const { user } = useAuth()
+  const userId = user?.id
   const toast = useToast()
   const [isOpen, setIsOpen] = useState(false)
   const [projects, setProjects] = useState([])
   const [projectsLoaded, setProjectsLoaded] = useState(false)
   const [selectedProject, setSelectedProject] = useState(null)
   const [messages, setMessages] = useState([])
+  const [messageAuthors, setMessageAuthors] = useState({})
   const [newMessage, setNewMessage] = useState('')
-  const [sending, setSending] = useState(false)
   const [showProjectPicker, setShowProjectPicker] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [visibleTimeMessageId, setVisibleTimeMessageId] = useState(null)
   const messagesEndRef = useRef(null)
   const channelRef = useRef(null)
+  const buttonRef = useRef(null)
+  const panelRef = useRef(null)
+
+  const scrollMessagesToEnd = useCallback((behavior = 'auto') => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' }))
+    })
+  }, [])
 
   // Preload projects on mount
   useEffect(() => {
@@ -37,56 +73,100 @@ export function FloatingChat({ onUnreadChange }) {
     return () => { cancelled = true }
   }, [])
 
+  const syncUnreadCount = useCallback(async () => {
+    const total = await loadUnreadTotal(projects, userId)
+    setUnreadCount(total)
+    if (onUnreadChange) onUnreadChange(total)
+  }, [projects, userId, onUnreadChange])
+
+  const markProjectSeen = useCallback(async (projectId) => {
+    const readMessages = await markProjectMessagesRead(projectId)
+    if (readMessages.length) {
+      setMessages(prev => mergeRealtimeMessages(prev, readMessages))
+    }
+    syncUnreadCount()
+  }, [syncUnreadCount])
+
   // Check for unread messages periodically
   useEffect(() => {
-    if (!session?.user || !projects.length) return
-
+    let cancelled = false
     const checkUnread = async () => {
-      const myId = session.user.id
-      let total = 0
-      for (const proj of projects) {
-        try {
-          const msgs = await getProjectMessages(proj.id)
-          // Count messages not from user
-          const unread = msgs?.filter(m => m.sender_id !== myId).length || 0
-          total += unread
-        } catch { /* ignore */ }
+      const total = await loadUnreadTotal(projects, userId)
+      if (!cancelled) {
+        setUnreadCount(total)
+        if (onUnreadChange) onUnreadChange(total)
       }
-      setUnreadCount(total)
-      if (onUnreadChange) onUnreadChange(total)
     }
-
-    checkUnread()
+    const initial = setTimeout(checkUnread, 0)
     const interval = setInterval(checkUnread, 30000)
-    return () => clearInterval(interval)
-  }, [session?.user, projects, onUnreadChange])
+    return () => {
+      cancelled = true
+      clearTimeout(initial)
+      clearInterval(interval)
+    }
+  }, [userId, projects, onUnreadChange])
 
-  const handleOpen = useCallback(async () => {
+  const handleOpen = async () => {
     if (!isOpen && !projectsLoaded) {
       // Already preloaded, but fallback
       const projs = await getMyProjects()
       setProjects(projs || [])
       setProjectsLoaded(true)
     }
-    if (isOpen) {
-      // Clear unread when opening
-      setUnreadCount(0)
-      if (onUnreadChange) onUnreadChange(0)
+    if (!isOpen && selectedProject?.id) {
+      markProjectSeen(selectedProject.id)
     }
-    setIsOpen(prev => !prev)
-  }, [isOpen, projectsLoaded, onUnreadChange])
+    setIsOpen(prev => {
+      const next = !prev
+      if (next) scrollMessagesToEnd('auto')
+      return next
+    })
+  }
 
-  const handleSelectProject = useCallback((project) => {
+  const handleSelectProject = (project) => {
     setSelectedProject(project)
     setShowProjectPicker(false)
-  }, [])
+    markProjectSeen(project.id)
+  }
 
-  const handleBackToProjects = useCallback(() => {
+  const handleBackToProjects = () => {
     setSelectedProject(null)
     setShowProjectPicker(true)
     setMessages([])
+    setVisibleTimeMessageId(null)
     if (channelRef.current) channelRef.current.unsubscribe()
-  }, [])
+  }
+
+  useEffect(() => {
+    const openChat = (event) => {
+      const projectId = event.detail?.projectId
+      const project = projectId ? projects.find(item => item.id === projectId) : null
+      if (project) {
+        setSelectedProject(project)
+        setShowProjectPicker(false)
+        markProjectSeen(project.id)
+      } else if (projects.length === 1) {
+        setSelectedProject(projects[0])
+        setShowProjectPicker(false)
+        markProjectSeen(projects[0].id)
+      }
+      setIsOpen(true)
+      scrollMessagesToEnd('auto')
+    }
+
+    window.addEventListener('fizzia-open-chat', openChat)
+    return () => window.removeEventListener('fizzia-open-chat', openChat)
+  }, [projects, markProjectSeen, scrollMessagesToEnd])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const handleOutsideClick = (event) => {
+      if (panelRef.current?.contains(event.target) || buttonRef.current?.contains(event.target)) return
+      setIsOpen(false)
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [isOpen])
 
   useEffect(() => {
     if (!selectedProject?.id || !isOpen) return
@@ -96,15 +176,16 @@ export function FloatingChat({ onUnreadChange }) {
     let cancelled = false
 
     getProjectMessages(selectedProject.id).then(msgs => {
-      if (!cancelled) setMessages(msgs || [])
+      if (!cancelled) {
+        setMessages(msgs || [])
+        markProjectSeen(selectedProject.id)
+      }
     })
 
     // Realtime subscription
     sub = subscribeToMessages(selectedProject.id, (payload) => {
-      setMessages(prev => {
-        if (prev.some(m => m.id === payload.id)) return prev
-        return [...prev, payload]
-      })
+      setMessages(prev => mergeRealtimeMessage(prev, payload))
+      if (payload?.sender_id !== userId) markProjectSeen(selectedProject.id)
     })
     channelRef.current = sub
 
@@ -112,12 +193,8 @@ export function FloatingChat({ onUnreadChange }) {
     pollInterval = setInterval(async () => {
       const msgs = await getProjectMessages(selectedProject.id)
       if (!msgs || cancelled) return
-      setMessages(prev => {
-        const existingIds = new Set(prev.map(m => m.id))
-        const newMsgs = msgs.filter(m => !existingIds.has(m.id))
-        if (newMsgs.length === 0) return prev
-        return [...prev, ...newMsgs]
-      })
+      setMessages(prev => mergeRealtimeMessages(prev, msgs))
+      markProjectSeen(selectedProject.id)
     }, 5000)
 
     return () => {
@@ -125,44 +202,80 @@ export function FloatingChat({ onUnreadChange }) {
       if (sub) sub.unsubscribe()
       if (pollInterval) clearInterval(pollInterval)
     }
-  }, [selectedProject?.id, isOpen])
+  }, [selectedProject?.id, isOpen, userId, markProjectSeen])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (!isOpen) return
+    scrollMessagesToEnd(messages.length ? 'smooth' : 'auto')
+  }, [messages, isOpen, scrollMessagesToEnd])
+
+  useEffect(() => {
+    if (isOpen && selectedProject?.id) scrollMessagesToEnd('auto')
+  }, [isOpen, selectedProject?.id, showProjectPicker, scrollMessagesToEnd])
+
+  useEffect(() => {
+    const ids = [...new Set(messages.map(message => message.sender_id).filter(Boolean))]
+      .filter(id => !messageAuthors[id])
+    if (!ids.length) return
+    let cancelled = false
+    supabase
+      .from('profiles')
+      .select('id, full_name, first_name, email, avatar_id, role')
+      .in('id', ids)
+      .then(({ data }) => {
+        if (cancelled) return
+        setMessageAuthors(prev => ({
+          ...prev,
+          ...Object.fromEntries((data || []).map(profile => [profile.id, profile])),
+        }))
+      })
+    return () => { cancelled = true }
+  }, [messages, messageAuthors])
 
   const handleSendMessage = async (e) => {
     e.preventDefault()
-    if (!newMessage.trim() || sending || !selectedProject) return
+    if (!newMessage.trim() || !selectedProject) return
     const content = newMessage.trim()
-    setSending(true)
+    setNewMessage('')
+    const tempId = genId()
+    const tempMsg = {
+      id: tempId,
+      project_id: selectedProject.id,
+      sender_id: user?.id,
+      content,
+      created_at: new Date().toISOString(),
+      _status: 'sending',
+    }
+    setMessages(prev => [...prev, tempMsg])
     try {
       const msg = await sendProjectMessage(selectedProject.id, content)
-      if (msg) {
-        setNewMessage('')
-      } else {
-        toast.error('No se pudo enviar el mensaje')
-      }
+      setMessages(prev => markMessageSent(prev, tempId, msg))
     } catch (err) {
       console.error('Error:', err)
+      setMessages(prev => markMessageFailed(prev, tempId))
       toast.error('Error al enviar el mensaje')
-    } finally {
-      setSending(false)
     }
   }
 
-  const mySenderId = session?.user?.id
+  const mySenderId = user?.id
 
   return (
     <>
       {/* Floating button */}
       <button
+        ref={buttonRef}
         onClick={handleOpen}
-        className="fixed bottom-6 right-6 z-[900] w-14 h-14 bg-fizzia-500 rounded-full shadow-2xl shadow-fizzia-500/30 flex items-center justify-center hover:bg-fizzia-400 transition-all hover:scale-105"
+        title={unreadCount > 0 ? `Tienes ${unreadCount} mensajes nuevos` : 'Preguntar al desarrollador sobre tu proyecto'}
+        className="cursor-pointer fixed bottom-6 right-6 z-[900] w-14 h-14 bg-fizzia-500 rounded-full shadow-2xl shadow-fizzia-500/30 flex items-center justify-center hover:bg-fizzia-400 transition-all hover:scale-105 group"
       >
         <span className="material-symbols-rounded text-white text-2xl">
           {isOpen ? 'close' : 'chat'}
         </span>
+        {!isOpen && (
+          <span className="pointer-events-none absolute bottom-full right-0 mb-3 hidden w-56 rounded-xl border border-dark-700 bg-dark-950 px-3 py-2 text-left text-xs font-medium text-dark-200 shadow-xl group-hover:block">
+            {unreadCount > 0 ? `Tienes ${unreadCount} mensajes nuevos` : 'Preguntar al desarrollador sobre tu proyecto'}
+          </span>
+        )}
         {unreadCount > 0 && !isOpen && (
           <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-xs font-bold flex items-center justify-center">
             {unreadCount > 9 ? '9+' : unreadCount}
@@ -172,7 +285,7 @@ export function FloatingChat({ onUnreadChange }) {
 
       {/* Chat window */}
       {isOpen && (
-        <div className="fixed bottom-24 right-6 z-[900] w-80 md:w-96 bg-dark-900 border border-dark-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col" style={{ height: '480px' }}>
+        <div ref={panelRef} className="fixed bottom-24 right-6 z-[900] w-80 md:w-96 bg-dark-900 border border-dark-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col" style={{ height: '480px' }}>
           {/* Header */}
           <div className="bg-dark-950 border-b border-dark-700 p-3 flex items-center gap-3">
             {selectedProject && !showProjectPicker && (
@@ -239,18 +352,56 @@ export function FloatingChat({ onUnreadChange }) {
                 ) : (
                   messages.map((msg) => {
                     const isMine = msg.sender_id === mySenderId
+                    const status = getDeliveryStatus(msg, isMine)
+                    const showTime = visibleTimeMessageId === msg.id
+                    const author = getMessageAuthor(msg, messageAuthors)
+                    const avatarId = getMessageAvatarId({ message: msg, isMine, author, currentUser: user })
                     return (
-                      <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm ${
-                          isMine
-                            ? 'bg-fizzia-500 text-white rounded-br-md'
-                            : 'bg-dark-800 text-dark-200 rounded-bl-md'
-                        }`}>
-                          <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                          <p className={`text-[10px] mt-0.5 ${isMine ? 'text-white/60' : 'text-dark-500'}`}>
-                            {new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}
-                          </p>
+                      <div key={msg.id} className={`flex items-end gap-2 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                        {!isMine && (
+                          <div className="h-7 w-7 rounded-full bg-white overflow-hidden shrink-0">
+                            <AvatarIcon id={avatarId || '2'} size={28} />
+                          </div>
+                        )}
+                        <div className={`flex max-w-[16rem] flex-col ${isMine ? 'items-end' : 'items-start'}`}>
+                          <div className={`flex items-end gap-1.5 ${isMine ? 'flex-row-reverse' : ''}`}>
+                          <button
+                            type="button"
+                            onClick={() => setVisibleTimeMessageId(prev => prev === msg.id ? null : msg.id)}
+                            className={`cursor-pointer px-3 py-2 rounded-2xl text-sm text-left ${
+                              isMine
+                                ? status === 'error' ? 'bg-red-500/80 text-white rounded-br-md'
+                                : 'bg-fizzia-500 text-white rounded-br-md'
+                                : 'bg-dark-800 text-dark-200 rounded-bl-md'
+                            }`}
+                          >
+                            <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                          </button>
+                          {isMine && (
+                            <span className={`mb-1 flex h-4 w-4 items-center justify-center ${status === 'error' ? 'text-red-400' : 'text-dark-500'}`}>
+                              {status === 'sending' && (
+                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                              )}
+                              {status === 'sent' && <span className="material-symbols-rounded text-[13px]">check</span>}
+                              {status === 'read' && <span className="material-symbols-rounded text-[13px] text-sky-400">done_all</span>}
+                              {status === 'error' && <span className="material-symbols-rounded text-[13px]">error</span>}
+                            </span>
+                          )}
+                          </div>
+                          {showTime && (
+                            <div className={`mt-1 text-[10px] ${isMine ? 'mr-6 text-fizzia-200/70' : 'ml-2 text-dark-500'}`}>
+                              {new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          )}
                         </div>
+                        {isMine && (
+                          <div className="h-7 w-7 rounded-full bg-white overflow-hidden shrink-0">
+                            <AvatarIcon id={avatarId || '1'} size={28} />
+                          </div>
+                        )}
                       </div>
                     )
                   })
@@ -269,17 +420,10 @@ export function FloatingChat({ onUnreadChange }) {
                 />
                 <button
                   type="submit"
-                  disabled={!newMessage.trim() || sending}
+                  disabled={!newMessage.trim()}
                   className="cursor-pointer px-3 py-2 bg-fizzia-500 text-white rounded-xl hover:bg-fizzia-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
-                  {sending ? (
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  ) : (
-                    <span className="material-symbols-rounded text-lg">send</span>
-                  )}
+                  <span className="material-symbols-rounded text-lg">send</span>
                 </button>
               </form>
             </>

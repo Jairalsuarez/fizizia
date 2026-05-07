@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { DashboardDataContext } from './dashboardDataContext'
-import { loadDashboardData } from '../services/adminData'
+import { loadDashboardData } from '../api/dashboardApi'
 import { buildMetrics } from '../utils/business'
 
 export function DashboardDataProvider({ children }) {

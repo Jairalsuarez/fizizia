@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { signUp, checkEmailExists } from '../../services/adminData'
+import { signUp, checkEmailExists } from '../../api/authApi'
 import { supabase } from '../../services/supabase'
 import { useAuth } from './authContext'
 
