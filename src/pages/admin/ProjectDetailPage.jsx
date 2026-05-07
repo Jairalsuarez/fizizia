@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { deleteProjectFile, getAllProjectFiles, uploadProjectFileAdmin } from '../../api/filesApi'
 import { getProjectMessages } from '../../api/messagesApi'
@@ -15,6 +15,8 @@ import { fetchGitHubCommits, formatCommitTime, getCommitAuthorName, getCommitDat
 import { getMessageAuthor, getMessageAuthorName, getMessageAvatarId } from '../../utils/messageIdentity'
 import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../../utils/messageStatus'
 import { sumApprovedPayments } from '../../utils/paymentStatus'
+import { readStoredValue, writeStoredValue } from '../../utils/persistedState'
+import { useRealtimeProject } from '../../hooks/useRealtimeProjects'
 
 let pendingId = Date.now()
 function genId() { return `pending-${pendingId++}` }
@@ -41,13 +43,7 @@ export function ProjectDetailPage() {
   const [project, setProject] = useState(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState(() => {
-    try {
-      const saved = localStorage.getItem('project-tab')
-      if (saved && ['general', 'mensajes', 'archivos'].includes(saved)) return saved
-    } catch {
-      return 'general'
-    }
-    return 'general'
+    return readStoredValue(`admin-project-tab-${projectId}`, 'general', value => ['general', 'mensajes', 'archivos', 'actividad'].includes(value))
   })
   const [saving, setSaving] = useState(false)
   const [startDate, setStartDate] = useState('')
@@ -107,10 +103,23 @@ export function ProjectDetailPage() {
   const channelRef = useRef(null)
   const fileInputRef = useRef(null)
 
+  const handleRealtimeProject = useCallback((updatedProject) => {
+    if (!updatedProject) return navigate('/admin/proyectos')
+    setProject(prev => prev ? { ...prev, ...updatedProject } : prev)
+    if (updatedProject.budget !== undefined) setBudgetValue(String(updatedProject.budget || ''))
+    if (updatedProject.final_price !== undefined) setFinalPriceValue(String(updatedProject.final_price || ''))
+    if (updatedProject.start_date !== undefined) setStartDate(updatedProject.start_date ? updatedProject.start_date.split('T')[0] : '')
+    if (updatedProject.due_date !== undefined) setDueDate(updatedProject.due_date ? updatedProject.due_date.split('T')[0] : '')
+    if (updatedProject.client_deadline !== undefined) setClientDeadline(updatedProject.client_deadline ? updatedProject.client_deadline.split('T')[0] : '')
+    if (updatedProject.repository_url !== undefined) setRepoUrl(updatedProject.repository_url || '')
+  }, [navigate])
+
+  useRealtimeProject(projectId, handleRealtimeProject)
+
   // Persist tab to localStorage
   useEffect(() => {
-    localStorage.setItem('project-tab', tab)
-  }, [tab])
+    writeStoredValue(`admin-project-tab-${projectId}`, tab)
+  }, [projectId, tab])
 
   useEffect(() => {
     const loadProject = async () => {
@@ -893,7 +902,7 @@ export function ProjectDetailPage() {
                 <div className="flex items-center justify-center h-full"><p className="text-dark-500 text-sm">No hay mensajes aún</p></div>
               ) : (
                 messages.map((msg) => {
-                  const isAdmin = msg.sender_id === myId || msg.is_admin_sender
+                  const isAdmin = msg.sender_id === myId
                   const status = getDeliveryStatus(msg, isAdmin)
                   const author = getMessageAuthor(msg, messageAuthors)
                   const authorName = getMessageAuthorName({ message: msg, isMine: isAdmin, author, clientName: project.clients?.name || 'Cliente' })
@@ -998,11 +1007,11 @@ export function ProjectDetailPage() {
                     rel="noopener noreferrer"
                     className="cursor-pointer flex items-start gap-3 rounded-xl border border-dark-800 bg-dark-950/70 p-4 transition-all hover:border-fizzia-500/40 hover:bg-dark-950"
                   >
-                    <div className="mt-0.5 h-9 w-9 rounded-full overflow-hidden border border-dark-700 bg-dark-800 shrink-0">
+                    <div className="w-8 h-8 rounded-full border border-dark-700 bg-dark-800 overflow-hidden flex items-center justify-center shrink-0">
                       {commit.author?.avatar_url ? (
                         <img src={commit.author.avatar_url} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <span className="material-symbols-rounded flex h-full w-full items-center justify-center text-base text-fizzia-400">terminal</span>
+                        <span className="material-symbols-rounded text-fizzia-400 text-sm">terminal</span>
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -1011,7 +1020,7 @@ export function ProjectDetailPage() {
                         {getCommitAuthorName(commit)} · {formatCommitTime(getCommitDate(commit))}
                       </p>
                     </div>
-                    <code className="rounded-md bg-dark-900 px-2 py-1 text-xs text-dark-400">{commit.sha?.slice(0, 7)}</code>
+                    <code className="cursor-pointer text-xs text-fizzia-400 hover:text-fizzia-300 font-mono shrink-0">{commit.sha?.slice(0, 7)}</code>
                   </a>
                 ))}
               </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { getAllProjects } from '../../api/projectsApi'
 import { getAdminProjectMessages, markAdminProjectMessagesRead, sendAdminMessage, subscribeToAdminMessages } from '../../api/messagesApi'
 import { deleteProjectFile, getAllProjectFiles, uploadProjectFileAdmin } from '../../api/filesApi'
@@ -7,6 +7,8 @@ import { useToast } from '../../components/Toast'
 import { AvatarIcon } from '../../data/avatars.jsx'
 import { getMessageAuthor, getMessageAuthorName, getMessageAvatarId } from '../../utils/messageIdentity'
 import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../../utils/messageStatus'
+import { readStoredValue, writeStoredValue } from '../../utils/persistedState'
+import { mergeRealtimeProject, useRealtimeProjects } from '../../hooks/useRealtimeProjects'
 
 let pendingId = Date.now()
 function genId() { return `pending-${pendingId++}` }
@@ -29,7 +31,8 @@ export function MessagesPage() {
   const [visibleTimeMessageId, setVisibleTimeMessageId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [myId, setMyId] = useState(null)
-  const [activeTab, setActiveTab] = useState('messages')
+  const [activeTab, setActiveTab] = useState(() => readStoredValue('admin-messages-tab', 'messages', value => ['messages', 'files'].includes(value)))
+  const [conversationMode, setConversationMode] = useState(() => readStoredValue('admin-messages-mode', 'client', value => ['client', 'internal'].includes(value)))
   const [projectFiles, setProjectFiles] = useState([])
   const [uploadingFile, setUploadingFile] = useState(false)
   const [fileNote, setFileNote] = useState('')
@@ -38,13 +41,30 @@ export function MessagesPage() {
   const channelRef = useRef(null)
   const toast = useToast()
 
+  const handleRealtimeProject = useCallback((payload) => {
+    if (payload.eventType === 'DELETE') {
+      setProjects(prev => prev.filter(project => project.id !== payload.old.id))
+      setSelectedProject(prev => prev?.id === payload.old.id ? null : prev)
+      return
+    }
+    if (!payload.new?.name?.trim()) return
+    setProjects(prev => mergeRealtimeProject(prev, payload.new))
+    setSelectedProject(prev => prev?.id === payload.new.id ? { ...prev, ...payload.new } : prev)
+  }, [])
+
+  useRealtimeProjects(handleRealtimeProject)
+
   useEffect(() => {
     const loadProjects = async () => {
       try {
         const { data: userData } = await supabase.auth.getUser()
         setMyId(userData?.user?.id)
         const projects = await getAllProjects()
-        setProjects(projects.filter(p => p.name && p.name.trim() !== ''))
+        const cleanProjects = projects.filter(p => p.name && p.name.trim() !== '')
+        setProjects(cleanProjects)
+        const savedProjectId = readStoredValue('admin-messages-project', '')
+        const savedProject = cleanProjects.find(project => project.id === savedProjectId)
+        if (savedProject) setSelectedProject(savedProject)
       } catch {
         setProjects([])
       } finally {
@@ -55,11 +75,23 @@ export function MessagesPage() {
   }, [])
 
   useEffect(() => {
+    writeStoredValue('admin-messages-tab', activeTab)
+  }, [activeTab])
+
+  useEffect(() => {
+    writeStoredValue('admin-messages-mode', conversationMode)
+  }, [conversationMode])
+
+  useEffect(() => {
+    writeStoredValue('admin-messages-project', selectedProject?.id)
+  }, [selectedProject?.id])
+
+  useEffect(() => {
     if (selectedProject) {
       const loadMessages = async () => {
-        const msgs = await getAdminProjectMessages(selectedProject.id)
+        const msgs = await getAdminProjectMessages(selectedProject.id, conversationMode)
         setMessages(msgs)
-        markAdminProjectMessagesRead(selectedProject.id).then(readMessages => {
+        markAdminProjectMessagesRead(selectedProject.id, conversationMode).then(readMessages => {
           if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
         })
         const files = await getAllProjectFiles(selectedProject.id)
@@ -74,18 +106,18 @@ export function MessagesPage() {
       channelRef.current = subscribeToAdminMessages(selectedProject.id, (payload) => {
         setMessages(prev => mergeRealtimeMessage(prev, payload))
         if (payload?.sender_id !== myId) {
-          markAdminProjectMessagesRead(selectedProject.id).then(readMessages => {
+          markAdminProjectMessagesRead(selectedProject.id, conversationMode).then(readMessages => {
             if (readMessages.length) setMessages(prev => mergeRealtimeMessages(prev, readMessages))
           })
         }
-      })
+      }, conversationMode)
     }
     return () => {
       if (channelRef.current) {
         channelRef.current.unsubscribe()
       }
     }
-  }, [selectedProject, myId])
+  }, [selectedProject, myId, conversationMode])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -123,11 +155,12 @@ export function MessagesPage() {
       content,
       created_at: new Date().toISOString(),
       is_admin_sender: true,
+      channel: conversationMode,
       _status: 'sending',
     }
     setMessages(prev => [...prev, tempMsg])
     try {
-      const msg = await sendAdminMessage(selectedProject.id, content)
+      const msg = await sendAdminMessage(selectedProject.id, content, conversationMode)
       setMessages(prev => markMessageSent(prev, tempId, msg || {}))
     } catch {
       setMessages(prev => markMessageFailed(prev, tempId))
@@ -262,6 +295,26 @@ export function MessagesPage() {
                   </button>
                 </div>
               </div>
+              {activeTab === 'messages' && (
+                <div className="mt-3 flex w-fit gap-1 rounded-lg bg-dark-800 p-0.5">
+                  <button
+                    onClick={() => setConversationMode('client')}
+                    className={`cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                      conversationMode === 'client' ? 'bg-fizzia-500 text-white' : 'text-dark-400 hover:text-white'
+                    }`}
+                  >
+                    Cliente
+                  </button>
+                  <button
+                    onClick={() => setConversationMode('internal')}
+                    className={`cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                      conversationMode === 'internal' ? 'bg-purple-500 text-white' : 'text-dark-400 hover:text-white'
+                    }`}
+                  >
+                    Equipo interno
+                  </button>
+                </div>
+              )}
             </div>
 
             {activeTab === 'messages' && (
@@ -273,46 +326,48 @@ export function MessagesPage() {
                     </div>
                   ) : (
                     messages.map((msg) => {
-                      const isAdmin = msg.sender_id === myId || msg.is_admin_sender
-                      const status = getDeliveryStatus(msg, isAdmin)
+                      const isMine = msg.sender_id === myId
+                      const status = getDeliveryStatus(msg, isMine)
                       const author = getMessageAuthor(msg, messageAuthors)
-                      const authorName = getMessageAuthorName({ message: msg, isMine: isAdmin, author, clientName: selectedProject.clients?.name || 'Cliente' })
-                      const avatarId = getMessageAvatarId({ message: msg, isMine: isAdmin, author, currentUser: messageAuthors[myId] })
+                      const authorName = getMessageAuthorName({ message: msg, isMine, author, clientName: conversationMode === 'internal' ? 'Developer' : selectedProject.clients?.name || 'Cliente' })
+                      const avatarId = getMessageAvatarId({ message: msg, isMine, author, currentUser: messageAuthors[myId] })
                       const time = new Date(msg.created_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
                       const showTime = visibleTimeMessageId === msg.id
                       return (
-                        <div key={msg.id} className={`flex items-end gap-2 ${isAdmin ? 'justify-end' : 'justify-start'}`}>
-                          {!isAdmin && (
+                        <div key={msg.id} className={`flex items-end gap-2 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                          {!isMine && (
                             <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
                               <AvatarIcon id={avatarId} size={32} />
                             </div>
                           )}
-                          <div onClick={() => setVisibleTimeMessageId(prev => prev === msg.id ? null : msg.id)} className={`cursor-pointer max-w-sm lg:max-w-md px-4 py-3 rounded-2xl text-sm ${
-                            isAdmin
-                              ? status === 'error' ? 'bg-red-500/80 text-white rounded-br-md' : 'bg-fizzia-500 text-white rounded-br-md'
-                              : 'bg-dark-800 text-dark-200 rounded-bl-md'
-                          }`}>
-                            <p className={`text-[11px] font-medium mb-1 ${isAdmin ? 'text-white/80' : 'text-dark-400'}`}>{authorName}</p>
-                            <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                            {showTime && <p className={`text-xs mt-1 ${isAdmin ? 'text-white/60' : 'text-dark-500'}`}>
-                              {time}
-                              {isAdmin && <span className="ml-1">(tú)</span>}
-                            </p>}
-                          </div>
-                          {isAdmin && (
-                            <span className={`mb-1 flex h-4 w-4 items-center justify-center ${status === 'error' ? 'text-red-400' : 'text-dark-500'}`}>
-                              {status === 'sending' && (
-                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                              )}
-                              {status === 'sent' && <span className="material-symbols-rounded text-[13px]">check</span>}
-                              {status === 'read' && <span className="material-symbols-rounded text-[13px] text-sky-400">done_all</span>}
-                              {status === 'error' && <span className="material-symbols-rounded text-[13px]">error</span>}
+                          <div className={`flex max-w-[70%] flex-col ${isMine ? 'items-end' : 'items-start'}`}>
+                            <span className={`mb-1 text-[11px] font-medium ${isMine ? 'text-fizzia-400' : 'text-dark-400'}`}>
+                              {authorName}
                             </span>
-                          )}
-                          {isAdmin && (
+                            <div className={`flex items-end gap-1.5 ${isMine ? 'flex-row-reverse' : ''}`}>
+                              <button
+                                type="button"
+                                onClick={() => setVisibleTimeMessageId(prev => prev === msg.id ? null : msg.id)}
+                                className={`cursor-pointer rounded-2xl px-4 py-3 text-left text-sm ${
+                                  isMine
+                                    ? status === 'error' ? 'bg-red-500/80 text-white rounded-br-sm' : 'bg-fizzia-500 text-white rounded-br-sm'
+                                    : 'bg-dark-800 text-dark-100 rounded-bl-sm'
+                                }`}
+                              >
+                                <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                              </button>
+                              {isMine && (
+                                <span className={`mb-1 flex h-4 w-4 items-center justify-center ${status === 'error' ? 'text-red-400' : 'text-dark-500'}`}>
+                                  {status === 'sending' && <span className="h-3 w-3 animate-spin rounded-full border-2 border-dark-500 border-t-transparent" />}
+                                  {status === 'sent' && <span className="material-symbols-rounded text-[13px]">check</span>}
+                                  {status === 'read' && <span className="material-symbols-rounded text-[13px] text-sky-400">done_all</span>}
+                                  {status === 'error' && <span className="material-symbols-rounded text-[13px] text-red-400">error</span>}
+                                </span>
+                              )}
+                            </div>
+                            {showTime && <span className="mt-1 text-[10px] text-dark-500">{time}</span>}
+                          </div>
+                          {isMine && (
                             <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
                               <AvatarIcon id={avatarId} size={32} />
                             </div>
@@ -329,7 +384,7 @@ export function MessagesPage() {
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     className="flex-1 px-4 py-2.5 bg-dark-950 border border-dark-700 rounded-xl text-white placeholder-dark-500 focus:outline-none focus:border-fizzia-500 text-sm"
-                    placeholder="Responder..."
+                    placeholder={conversationMode === 'internal' ? 'Responder al developer...' : 'Responder al cliente...'}
                   />
                   <button
                     type="submit"

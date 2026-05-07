@@ -1,15 +1,23 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../features/auth/authContext'
 import { supabase } from '../../services/supabase'
 import { formatDate, formatMoney } from '../../utils/format'
 import { PROJECT_STATUS, getProjectStatusColor, getProjectStatusLabel } from '../../domain/projects'
+import { mergeRealtimeProject, useRealtimeProjects } from '../../hooks/useRealtimeProjects'
 
 export function DashboardPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
+
+  const handleRealtimeProject = useCallback((payload) => {
+    if (payload.eventType === 'DELETE') setProjects(prev => prev.filter(project => project.id !== payload.old.id))
+    else setProjects(prev => prev.some(project => project.id === payload.new.id) ? mergeRealtimeProject(prev, payload.new) : prev)
+  }, [])
+
+  useRealtimeProjects(handleRealtimeProject)
 
   useEffect(() => {
     const load = async () => {

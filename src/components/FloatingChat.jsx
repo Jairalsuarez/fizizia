@@ -7,6 +7,7 @@ import { AvatarIcon } from '../data/avatars.jsx'
 import { supabase } from '../services/supabase'
 import { getMessageAuthor, getMessageAvatarId } from '../utils/messageIdentity'
 import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../utils/messageStatus'
+import { readStoredValue, writeStoredValue } from '../utils/persistedState'
 
 let pendingId = Date.now()
 function genId() { return `pending-${pendingId++}` }
@@ -63,6 +64,12 @@ export function FloatingChat({ onUnreadChange }) {
         if (!cancelled) {
           setProjects(projs || [])
           setProjectsLoaded(true)
+          const savedProjectId = readStoredValue('client-floating-chat-project', '')
+          const savedProject = (projs || []).find(project => project.id === savedProjectId)
+          if (savedProject) {
+            setSelectedProject(savedProject)
+            setShowProjectPicker(false)
+          }
         }
       } catch (err) {
         console.error('Error preloading projects:', err)
@@ -128,6 +135,10 @@ export function FloatingChat({ onUnreadChange }) {
     setShowProjectPicker(false)
     markProjectSeen(project.id)
   }
+
+  useEffect(() => {
+    writeStoredValue('client-floating-chat-project', selectedProject?.id)
+  }, [selectedProject?.id])
 
   const handleBackToProjects = () => {
     setSelectedProject(null)

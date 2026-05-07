@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS messages (
   project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
   is_admin_sender BOOLEAN DEFAULT FALSE,
+  channel TEXT NOT NULL DEFAULT 'client' CHECK (channel IN ('client', 'internal')),
   read_at TIMESTAMPTZ,
   read_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -12,6 +13,9 @@ CREATE TABLE IF NOT EXISTS messages (
 
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'client';
+ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_channel_check;
+ALTER TABLE messages ADD CONSTRAINT messages_channel_check CHECK (channel IN ('client', 'internal'));
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_id TEXT DEFAULT '1';
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS first_name TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT;
@@ -26,6 +30,17 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
 -- Index for fast queries
 CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_project_channel ON messages(project_id, channel, created_at);
+
+CREATE TABLE IF NOT EXISTS project_developers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  developer_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  assigned_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(project_id, developer_id)
+);
+
+ALTER TABLE IF EXISTS project_developers ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies
 DROP POLICY IF EXISTS "Users can view messages on their projects" ON messages;
@@ -34,11 +49,21 @@ CREATE POLICY "Users can view messages on their projects"
     EXISTS (
       SELECT 1 FROM projects pr
       JOIN client_users cu ON cu.client_id = pr.client_id
-      WHERE pr.id = project_id AND cu.user_id = auth.uid()
+      WHERE pr.id = project_id AND cu.user_id = auth.uid() AND messages.channel = 'client'
     )
     OR
     EXISTS (
       SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager')
+    )
+    OR
+    (
+      messages.channel = 'internal'
+      AND EXISTS (
+        SELECT 1
+        FROM project_developers pd
+        WHERE pd.project_id = messages.project_id
+          AND pd.developer_id = auth.uid()
+      )
     )
   );
 
@@ -48,11 +73,21 @@ CREATE POLICY "Users can send messages on their projects"
     EXISTS (
       SELECT 1 FROM projects pr
       JOIN client_users cu ON cu.client_id = pr.client_id
-      WHERE pr.id = project_id AND cu.user_id = auth.uid()
+      WHERE pr.id = project_id AND cu.user_id = auth.uid() AND messages.channel = 'client'
     )
     OR
     EXISTS (
       SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager')
+    )
+    OR
+    (
+      messages.channel = 'internal'
+      AND EXISTS (
+        SELECT 1
+        FROM project_developers pd
+        WHERE pd.project_id = messages.project_id
+          AND pd.developer_id = auth.uid()
+      )
     )
   );
 
@@ -74,11 +109,21 @@ CREATE POLICY "Users can mark project messages as read"
       EXISTS (
         SELECT 1 FROM projects pr
         JOIN client_users cu ON cu.client_id = pr.client_id
-        WHERE pr.id = project_id AND cu.user_id = auth.uid()
+        WHERE pr.id = project_id AND cu.user_id = auth.uid() AND messages.channel = 'client'
       )
       OR
       EXISTS (
-        SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager', 'developer')
+        SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager')
+      )
+      OR
+      (
+        messages.channel = 'internal'
+        AND EXISTS (
+          SELECT 1
+          FROM project_developers pd
+          WHERE pd.project_id = messages.project_id
+            AND pd.developer_id = auth.uid()
+        )
       )
     )
   ) WITH CHECK (
@@ -87,11 +132,21 @@ CREATE POLICY "Users can mark project messages as read"
       EXISTS (
         SELECT 1 FROM projects pr
         JOIN client_users cu ON cu.client_id = pr.client_id
-        WHERE pr.id = project_id AND cu.user_id = auth.uid()
+        WHERE pr.id = project_id AND cu.user_id = auth.uid() AND messages.channel = 'client'
       )
       OR
       EXISTS (
-        SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager', 'developer')
+        SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager')
+      )
+      OR
+      (
+        messages.channel = 'internal'
+        AND EXISTS (
+          SELECT 1
+          FROM project_developers pd
+          WHERE pd.project_id = messages.project_id
+            AND pd.developer_id = auth.uid()
+        )
       )
     )
   );
@@ -108,6 +163,7 @@ CREATE POLICY "Users can view chat participant profiles"
       JOIN projects pr ON pr.id = m.project_id
       JOIN client_users cu ON cu.client_id = pr.client_id
       WHERE m.sender_id = profiles.id
+        AND m.channel = 'client'
         AND cu.user_id = auth.uid()
     )
     OR EXISTS (

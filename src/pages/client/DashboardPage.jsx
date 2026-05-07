@@ -1,13 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { getMyProjects } from '../../api/projectsApi'
 import { useAuth } from '../../features/auth/authContext'
 import { ProjectCard, ProjectCardSkeleton, EmptyProjects } from '../../components/ProjectCard'
+import { mergeRealtimeProject, useRealtimeProjects } from '../../hooks/useRealtimeProjects'
 
 export function DashboardPage() {
   const { user } = useAuth()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
+
+  const handleRealtimeProject = useCallback((payload) => {
+    if (payload.eventType === 'DELETE') setProjects(prev => prev.filter(project => project.id !== payload.old.id))
+    else setProjects(prev => prev.some(project => project.id === payload.new.id) ? mergeRealtimeProject(prev, payload.new) : prev)
+  }, [])
+
+  useRealtimeProjects(handleRealtimeProject)
 
   const openMessages = () => {
     window.dispatchEvent(new CustomEvent('fizzia-open-chat', {

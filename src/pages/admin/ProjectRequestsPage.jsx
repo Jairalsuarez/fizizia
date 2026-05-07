@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '../../api/clientsApi'
 import { getAllProjects, updateProject } from '../../api/projectsApi'
 import { formatDate, formatMoney } from '../../utils/format'
 import { PROJECT_STATUS, getProjectStatusTone } from '../../domain/projects'
+import { mergeRealtimeProject, useRealtimeProjects } from '../../hooks/useRealtimeProjects'
 
 export function ProjectRequestsPage() {
   const [requests, setRequests] = useState([])
@@ -20,6 +21,29 @@ export function ProjectRequestsPage() {
   })
   const [updating, setUpdating] = useState(false)
   const [filter, setFilter] = useState('all')
+
+  const handleRealtimeProject = useCallback((payload) => {
+    if (payload.eventType === 'DELETE') {
+      setRequests(prev => prev.filter(project => project.id !== payload.old.id))
+      setActiveProjects(prev => prev.filter(project => project.id !== payload.old.id))
+      return
+    }
+    const project = payload.new
+    setRequests(prev => {
+      const next = project.status === PROJECT_STATUS.REQUESTED
+        ? mergeRealtimeProject(prev, project)
+        : prev.filter(item => item.id !== project.id)
+      return next
+    })
+    setActiveProjects(prev => {
+      const next = project.status !== PROJECT_STATUS.REQUESTED
+        ? mergeRealtimeProject(prev, project)
+        : prev.filter(item => item.id !== project.id)
+      return next
+    })
+  }, [])
+
+  useRealtimeProjects(handleRealtimeProject)
 
   useEffect(() => {
     const load = async () => {

@@ -1,9 +1,11 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Card, StatusBadge, Icon, EmptyState, Skeleton } from '../../components/ui/'
 import { getMyProjects, getMyProjectMilestones } from '../../api/projectsApi'
 import { formatMoney, formatDate } from '../../utils/format'
 import { formatRelative } from '../../utils/dates'
+import { readStoredValue, writeStoredValue } from '../../utils/persistedState'
+import { mergeRealtimeProject, useRealtimeProjects } from '../../hooks/useRealtimeProjects'
 
 export function ProjectPage() {
   const [projects, setProjects] = useState([])
@@ -12,6 +14,18 @@ export function ProjectPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  const handleRealtimeProject = useCallback((payload) => {
+    if (payload.eventType === 'DELETE') {
+      setProjects(prev => prev.filter(project => project.id !== payload.old.id))
+      setSelectedProject(prev => prev?.id === payload.old.id ? null : prev)
+      return
+    }
+    setProjects(prev => prev.some(project => project.id === payload.new.id) ? mergeRealtimeProject(prev, payload.new) : prev)
+    setSelectedProject(prev => prev?.id === payload.new.id ? { ...prev, ...payload.new } : prev)
+  }, [])
+
+  useRealtimeProjects(handleRealtimeProject)
+
   const loadProjects = async () => {
     try {
       setLoading(true)
@@ -19,7 +33,8 @@ export function ProjectPage() {
       const data = await getMyProjects()
       setProjects(data || [])
       if (data && data.length > 0) {
-        setSelectedProject(data[0])
+        const savedProjectId = readStoredValue('client-projects-selected', '')
+        setSelectedProject(data.find(project => project.id === savedProjectId) || data[0])
       }
     } catch (err) {
       setError(err.message || 'Failed to load projects')
@@ -46,6 +61,10 @@ export function ProjectPage() {
       loadMilestones(selectedProject.id)
     }
   }, [selectedProject])
+
+  useEffect(() => {
+    writeStoredValue('client-projects-selected', selectedProject?.id)
+  }, [selectedProject?.id])
 
   if (loading) {
     return (

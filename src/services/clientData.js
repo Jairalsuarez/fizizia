@@ -118,7 +118,17 @@ export async function getProjectMessages(projectId) {
     .from('messages')
     .select('*')
     .eq('project_id', projectId)
+    .eq('channel', 'client')
     .order('created_at', { ascending: true })
+  if (error?.code === '42703' || String(error?.message || '').includes('channel')) {
+    const fallback = await supabase
+      .from('messages')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: true })
+    if (fallback.error) console.error('Error fetching messages:', fallback.error)
+    return fallback.data || []
+  }
   if (error) console.error('Error fetching messages:', error)
   return data || []
 }
@@ -128,9 +138,18 @@ export async function sendProjectMessage(projectId, content) {
   if (!userId) return null
   const { data, error } = await supabase
     .from('messages')
-    .insert({ project_id: projectId, sender_id: userId, content })
+    .insert({ project_id: projectId, sender_id: userId, content, channel: 'client' })
     .select()
     .single()
+  if (error?.code === '42703' || String(error?.message || '').includes('channel')) {
+    const fallback = await supabase
+      .from('messages')
+      .insert({ project_id: projectId, sender_id: userId, content })
+      .select()
+      .single()
+    if (fallback.error) console.error('Error sending message:', fallback.error)
+    return fallback.data
+  }
   if (error) console.error('Error sending message:', error)
   return data
 }
@@ -142,9 +161,21 @@ export async function markProjectMessagesRead(projectId) {
     .from('messages')
     .update({ read_at: new Date().toISOString(), read_by: userId })
     .eq('project_id', projectId)
+    .eq('channel', 'client')
     .neq('sender_id', userId)
     .is('read_at', null)
     .select()
+  if (error?.code === '42703' || String(error?.message || '').includes('channel')) {
+    const fallback = await supabase
+      .from('messages')
+      .update({ read_at: new Date().toISOString(), read_by: userId })
+      .eq('project_id', projectId)
+      .neq('sender_id', userId)
+      .is('read_at', null)
+      .select()
+    if (fallback.error) console.error('Error marking messages as read:', fallback.error)
+    return fallback.data || []
+  }
   if (error) console.error('Error marking messages as read:', error)
   return data || []
 }
@@ -155,7 +186,10 @@ export function subscribeToMessages(projectId, callback) {
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
-      (payload) => callback(payload.new)
+      (payload) => {
+        if (!payload.new) return
+        if (!payload.new?.channel || payload.new.channel === 'client') callback(payload.new)
+      }
     )
     .subscribe()
 }

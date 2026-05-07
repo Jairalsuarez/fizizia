@@ -6,6 +6,7 @@ import { useToast } from '../../components/Toast'
 import { avatars } from '../../data/avatarOptions'
 import { AvatarIcon } from '../../data/avatars.jsx'
 import { appThemeOptions, useAppTheme } from '../../theme/appTheme'
+import { readStoredValue, writeStoredValue } from '../../utils/persistedState'
 
 const defaultNotifications = [
   'Se actualice el estado de un proyecto',
@@ -21,7 +22,7 @@ export function AccountSettingsPage({
   const { session, updateUser } = useAuth()
   const toast = useToast()
   const { theme: selectedTheme, palette, setTheme } = useAppTheme(theme)
-  const [activeTab, setActiveTab] = useState('perfil')
+  const [activeTab, setActiveTab] = useState(() => readStoredValue(`settings-tab-${theme}`, 'perfil', value => ['perfil', 'seguridad', 'tema', 'notificaciones'].includes(value)))
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -32,6 +33,10 @@ export function AccountSettingsPage({
   const [formData, setFormData] = useState({ full_name: '', phone: '' })
   const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' })
   const [showPasswords, setShowPasswords] = useState({ current: false, new: false, confirm: false })
+
+  useEffect(() => {
+    writeStoredValue(`settings-tab-${theme}`, activeTab)
+  }, [activeTab, theme])
 
   useEffect(() => {
     let cancelled = false

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { DashboardDataContext } from './dashboardDataContext'
 import { loadDashboardData } from '../api/dashboardApi'
 import { buildMetrics } from '../utils/business'
+import { supabase } from '../services/supabase'
 
 export function DashboardDataProvider({ children }) {
   const [data, setData] = useState({
@@ -32,6 +33,25 @@ export function DashboardDataProvider({ children }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshData()
+  }, [refreshData])
+
+  useEffect(() => {
+    let timer = null
+    const scheduleRefresh = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => refreshData(), 250)
+    }
+    const channel = supabase
+      .channel('dashboard:data:realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, scheduleRefresh)
+      .subscribe()
+    return () => {
+      clearTimeout(timer)
+      channel.unsubscribe()
+    }
   }, [refreshData])
 
   const metrics = buildMetrics(data)

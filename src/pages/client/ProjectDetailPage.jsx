@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getProjectMessages, markProjectMessagesRead, sendProjectMessage, subscribeToMessages } from '../../api/messagesApi'
 import { createClientPayment, getProjectDirectPayments, getProjectInvoices, uploadPaymentProof } from '../../api/paymentsApi'
@@ -14,6 +14,8 @@ import { fetchGitHubCommits, formatCommitTime, getCommitAuthorName, getCommitDat
 import { getMessageAuthor, getMessageAuthorName, getMessageAvatarId } from '../../utils/messageIdentity'
 import { getDeliveryStatus, markMessageFailed, markMessageSent, mergeRealtimeMessage, mergeRealtimeMessages } from '../../utils/messageStatus'
 import { sumApprovedPayments } from '../../utils/paymentStatus'
+import { readStoredValue, writeStoredValue } from '../../utils/persistedState'
+import { useRealtimeProject } from '../../hooks/useRealtimeProjects'
 
 let pendingId = Date.now()
 function genId() { return `pending-${pendingId++}` }
@@ -42,7 +44,7 @@ export function ProjectDetailPage() {
   const [invoices, setInvoices] = useState([])
   const [payments, setPayments] = useState([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('info')
+  const [activeTab, setActiveTab] = useState(() => readStoredValue(`client-project-tab-${projectId}`, 'info', value => ['info', 'mensajes', 'actividad', 'pagos', 'files'].includes(value)))
   const [showEdit, setShowEdit] = useState(false)
   const [editData, setEditData] = useState({ name: '', description: '', budget: '', repo_url: '', live_url: '', notes: '' })
   const [savingEdit, setSavingEdit] = useState(false)
@@ -54,6 +56,22 @@ export function ProjectDetailPage() {
   const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
   const channelRef = useRef(null)
+
+  const handleRealtimeProject = useCallback((updatedProject) => {
+    if (!updatedProject) return navigate('/cliente/proyectos')
+    setProject(prev => prev ? { ...prev, ...updatedProject } : prev)
+    setEditData(prev => ({
+      ...prev,
+      name: updatedProject.name ?? prev.name,
+      description: updatedProject.description ?? prev.description,
+      budget: updatedProject.budget ?? prev.budget,
+      repo_url: updatedProject.repo_url ?? updatedProject.repository_url ?? prev.repo_url,
+      live_url: updatedProject.live_url ?? prev.live_url,
+      notes: updatedProject.notes ?? prev.notes,
+    }))
+  }, [navigate])
+
+  useRealtimeProject(projectId, handleRealtimeProject)
 
   const [paymentMethod, setPaymentMethod] = useState(null)
   const [paymentStep, setPaymentStep] = useState(0)
@@ -76,6 +94,10 @@ export function ProjectDetailPage() {
   const pending = Math.max(projectTotal - approvedPaid, 0)
 
   /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    writeStoredValue(`client-project-tab-${projectId}`, activeTab)
+  }, [activeTab, projectId])
+
   useEffect(() => {
     const saved = localStorage.getItem('fizzia_payment_details')
     if (saved) {
@@ -231,7 +253,19 @@ export function ProjectDetailPage() {
     return () => { cancelled = true }
   }, [activeTab, project])
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  const scrollMessagesToEnd = (behavior = 'auto') => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' }))
+    })
+  }
+
+  useEffect(() => {
+    if (activeTab === 'mensajes') scrollMessagesToEnd(messages.length ? 'smooth' : 'auto')
+  }, [messages, activeTab])
+
+  useEffect(() => {
+    if (activeTab === 'mensajes') scrollMessagesToEnd('auto')
+  }, [activeTab])
 
   const createPayPalOrder = async () => {
     const amount = paymentAmount ? Number(paymentAmount) : pending
@@ -774,7 +808,7 @@ export function ProjectDetailPage() {
                           </span>
                         )}
                       </div>
-                      {showTime && <span className="mt-1 text-[10px] text-dark-500">{time}</span>}
+                        {showTime && <span className={`mt-1 text-[10px] ${isMine ? 'mr-6 text-fizzia-500/60' : 'ml-2 text-dark-500'}`}>{time}</span>}
                     </div>
                     {isMine && (
                       <div className="h-8 w-8 rounded-full bg-white overflow-hidden shrink-0">
@@ -834,11 +868,11 @@ export function ProjectDetailPage() {
                   rel="noopener noreferrer"
                   className="cursor-pointer flex items-start gap-3 rounded-xl border border-dark-800 bg-dark-950/70 p-4 hover:border-dark-700 transition-all"
                 >
-                  <div className="mt-0.5 h-8 w-8 rounded-full overflow-hidden bg-dark-800 shrink-0">
+                  <div className="w-8 h-8 rounded-full border border-dark-700 bg-dark-800 overflow-hidden flex items-center justify-center shrink-0">
                     {commit.author?.avatar_url ? (
                       <img src={commit.author.avatar_url} alt="" className="h-full w-full object-cover" />
                     ) : (
-                      <span className="material-symbols-rounded text-dark-500 flex h-full w-full items-center justify-center text-base">commit</span>
+                      <span className="material-symbols-rounded text-fizzia-400 text-sm">terminal</span>
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -847,7 +881,7 @@ export function ProjectDetailPage() {
                         {getCommitAuthorName(commit)} · {formatCommitTime(getCommitDate(commit))}
                     </p>
                   </div>
-                  <code className="text-dark-500 text-xs">{commit.sha?.slice(0, 7)}</code>
+                  <code className="cursor-pointer text-xs text-fizzia-400 hover:text-fizzia-300 font-mono shrink-0">{commit.sha?.slice(0, 7)}</code>
                 </a>
               ))}
             </div>

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { StatusBadge, EmptyState, Skeleton } from '../../components/ui/'
 import { formatMoney, formatDate } from '../../utils/format'
 import { getAllProjects } from '../../api/projectsApi'
+import { mergeRealtimeProject, useRealtimeProjects } from '../../hooks/useRealtimeProjects'
 
 const FINISHED_STATUSES = ['entregado', 'cancelado']
 
@@ -9,6 +10,13 @@ export function ProjectsPage() {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
+
+  const handleRealtimeProject = useCallback((payload) => {
+    if (payload.eventType === 'DELETE') setProjects(prev => prev.filter(project => project.id !== payload.old.id))
+    else setProjects(prev => mergeRealtimeProject(prev, payload.new))
+  }, [])
+
+  useRealtimeProjects(handleRealtimeProject)
 
   useEffect(() => {
     const loadProjects = async () => {

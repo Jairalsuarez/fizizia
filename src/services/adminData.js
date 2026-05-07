@@ -215,28 +215,122 @@ export async function getProjectsWithMessages() {
   return data || []
 }
 
-export async function getAdminProjectMessages(projectId) {
-  const { data, error } = await supabase
+async function selectMessagesByChannel(projectId, channel) {
+  const query = () => supabase
+    .from('messages')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('channel', channel)
+    .order('created_at', { ascending: true })
+
+  const { data, error } = await query()
+  if (!error) return data || []
+  if (error.code !== '42703' && !String(error.message || '').includes('channel')) {
+    console.error('Error fetching messages:', error)
+    return []
+  }
+
+  const fallback = await supabase
     .from('messages')
     .select('*')
     .eq('project_id', projectId)
     .order('created_at', { ascending: true })
-  if (error) console.error('Error fetching admin messages:', error)
-  return data || []
+  if (fallback.error) console.error('Error fetching messages:', fallback.error)
+  return fallback.data || []
 }
 
-export async function sendAdminMessage(projectId, content) {
+async function updateMessagesReadByChannel(projectId, channel) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return []
+  const update = () => supabase
+    .from('messages')
+    .update({ read_at: new Date().toISOString(), read_by: user.id })
+    .eq('project_id', projectId)
+    .eq('channel', channel)
+    .neq('sender_id', user.id)
+    .is('read_at', null)
+    .select()
+
+  const { data, error } = await update()
+  if (!error) return data || []
+  if (error.code !== '42703' && !String(error.message || '').includes('channel')) {
+    console.error('Error marking messages as read:', error)
+    return []
+  }
+
+  const fallback = await supabase
+    .from('messages')
+    .update({ read_at: new Date().toISOString(), read_by: user.id })
+    .eq('project_id', projectId)
+    .neq('sender_id', user.id)
+    .is('read_at', null)
+    .select()
+  if (fallback.error) console.error('Error marking messages as read:', fallback.error)
+  return fallback.data || []
+}
+
+export async function getAdminProjectMessages(projectId, channel = 'client') {
+  return selectMessagesByChannel(projectId, channel)
+}
+
+export async function getInternalProjectMessages(projectId) {
+  return selectMessagesByChannel(projectId, 'internal')
+}
+
+export async function sendAdminMessage(projectId, content, channel = 'client') {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('messages')
-    .insert({ project_id: projectId, sender_id: user.id, content, is_admin_sender: true })
+    .insert({ project_id: projectId, sender_id: user.id, content, is_admin_sender: channel === 'client', channel })
     .select()
     .single()
+  if (error?.code === '42703' || String(error?.message || '').includes('channel')) {
+    const fallback = await supabase
+      .from('messages')
+      .insert({ project_id: projectId, sender_id: user.id, content, is_admin_sender: true })
+      .select()
+      .single()
+    return fallback.data
+  }
   return data
 }
 
-export async function markAdminProjectMessagesRead(projectId) {
+export async function sendInternalProjectMessage(projectId, content) {
+  return sendAdminMessage(projectId, content, 'internal')
+}
+
+export async function markAdminProjectMessagesRead(projectId, channel = 'client') {
+  return updateMessagesReadByChannel(projectId, channel)
+}
+
+export async function markInternalProjectMessagesRead(projectId) {
+  return updateMessagesReadByChannel(projectId, 'internal')
+}
+
+export function subscribeToProjectMessagesByChannel(projectId, channel, callback) {
+  return supabase
+    .channel(`messages:${channel}:${projectId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
+      (payload) => {
+        if (!payload.new) return
+        if (!payload.new.channel || payload.new.channel === channel) callback(payload.new)
+      }
+    )
+    .subscribe()
+}
+
+export function subscribeToAdminMessages(projectId, callback, channel = 'client') {
+  return subscribeToProjectMessagesByChannel(projectId, channel, callback)
+}
+
+export function subscribeToInternalProjectMessages(projectId, callback) {
+  return subscribeToProjectMessagesByChannel(projectId, 'internal', callback)
+}
+
+export async function markAllProjectMessagesRead(projectId) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return []
   const { data, error } = await supabase
@@ -248,17 +342,6 @@ export async function markAdminProjectMessagesRead(projectId) {
     .select()
   if (error) console.error('Error marking admin messages as read:', error)
   return data || []
-}
-
-export function subscribeToAdminMessages(projectId, callback) {
-  return supabase
-    .channel(`admin-messages:${projectId}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
-      (payload) => callback(payload.new)
-    )
-    .subscribe()
 }
 
 export async function getPendingProjectRequests() {
